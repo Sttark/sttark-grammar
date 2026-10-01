@@ -1,0 +1,349 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Claude grammar checker mockup</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    background: linear-gradient(135deg, #3b4a6b 0%, #6b5b8a 45%, #c27c6b 100%);
+    color: #1d1d1f;
+  }
+
+  /* menu bar */
+  .menubar {
+    height: 26px; display: flex; align-items: center; padding: 0 14px; gap: 18px;
+    background: rgba(240,240,245,.72); backdrop-filter: blur(20px);
+    font-size: 13px; position: relative; z-index: 20;
+  }
+  .menubar b { font-weight: 700; }
+  .menubar .spacer { flex: 1; }
+  .mb-app {
+    display: flex; align-items: center; gap: 4px; padding: 1px 6px; border-radius: 4px; cursor: pointer;
+  }
+  .mb-app.open, .mb-app:hover { background: rgba(0,0,0,.12); }
+  .mb-app .n { font-size: 12px; font-weight: 600; min-width: 10px; }
+  .menu {
+    position: absolute; top: 26px; width: 260px; display: none; z-index: 40;
+    background: rgba(246,246,248,.96); backdrop-filter: blur(20px);
+    border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.28); padding: 5px; font-size: 13px;
+  }
+  .menu.show { display: block; }
+  .menu div.item { padding: 4px 10px; border-radius: 4px; display: flex; justify-content: space-between; }
+  .menu div.item:hover { background: #2f6fde; color: #fff; }
+  .menu div.item:hover .k { color: #fff; }
+  .menu .k { color: #8a8a8e; }
+  .menu hr { border: 0; border-top: 1px solid rgba(0,0,0,.1); margin: 5px 6px; }
+  .menu .head { padding: 4px 10px; color: #8a8a8e; font-size: 12px; }
+
+  /* mail window */
+  .win {
+    position: absolute; left: 60px; top: 70px; width: 780px;
+    background: #fff; border-radius: 12px; overflow: hidden;
+    box-shadow: 0 25px 60px rgba(0,0,0,.35), 0 0 0 .5px rgba(0,0,0,.2);
+  }
+  .titlebar {
+    height: 52px; display: flex; align-items: center; padding: 0 16px; gap: 8px;
+    background: #f6f6f6; border-bottom: 1px solid #e3e3e3;
+  }
+  .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .titlebar .t { margin-left: 14px; font-weight: 600; font-size: 13px; }
+  .field { display: flex; padding: 9px 20px; border-bottom: 1px solid #ececec; font-size: 13px; }
+  .field .l { color: #8a8a8e; width: 64px; }
+  .compose { position: relative; padding: 18px 20px 60px; min-height: 380px; }
+  .text { font-size: 15px; line-height: 1.75; }
+
+  /* underlines */
+  .iss {
+    text-decoration-line: underline; text-decoration-thickness: 2.5px; text-underline-offset: 4px;
+    cursor: pointer; border-radius: 3px; transition: background .12s;
+  }
+  .iss.sp { text-decoration-color: #e5484d; }
+  .iss.gr { text-decoration-color: #f0a020; }
+  .iss.cap { text-decoration-color: #3e7bfa; }
+  .iss.sp.active, .iss.sp:hover { background: rgba(229,72,77,.14); }
+  .iss.gr.active, .iss.gr:hover { background: rgba(240,160,32,.18); }
+  .iss.cap.active, .iss.cap:hover { background: rgba(62,123,250,.14); }
+  .fixed { background: rgba(48,164,108,.18); border-radius: 3px; transition: background 1.2s; }
+  .fixed.fade { background: transparent; }
+
+  /* corner badge */
+  .badge {
+    position: absolute; right: 16px; bottom: 14px; height: 30px; min-width: 30px; padding: 0 10px;
+    border-radius: 15px; background: #e5484d; color: #fff; font-weight: 700; font-size: 13px;
+    display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,.2);
+  }
+  .badge .lbl { font-weight: 500; font-size: 12px; }
+  .badge.ok { background: #30a46c; }
+
+  /* hover card */
+  .card {
+    position: absolute; width: 330px; display: none; z-index: 30;
+    background: #fff; border-radius: 10px; font-size: 13px;
+    box-shadow: 0 12px 36px rgba(0,0,0,.22), 0 0 0 .5px rgba(0,0,0,.15);
+  }
+  .card.show { display: block; }
+  .card .top { display: flex; align-items: center; gap: 8px; padding: 12px 14px 0; }
+  .card .kd { width: 9px; height: 9px; border-radius: 50%; }
+  .card .kind { font-weight: 600; color: #555; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .card .by { margin-left: auto; display: flex; align-items: center; gap: 4px; color: #a0a0a5; font-size: 11px; }
+  .card .change { padding: 10px 14px 4px; font-size: 16px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .card .old { color: #9a9aa0; text-decoration: line-through; }
+  .card .new {
+    background: #2f6fde; color: #fff; font-weight: 600; border: 0; border-radius: 6px;
+    padding: 5px 12px; font-size: 15px; cursor: pointer; font-family: inherit;
+  }
+  .card .new:hover { background: #1f5bc4; }
+  .card .why { padding: 4px 14px 12px; color: #555; line-height: 1.45; }
+  .card .foot {
+    display: flex; gap: 4px; padding: 8px 10px; border-top: 1px solid #eee; background: #fafafa;
+    border-radius: 0 0 10px 10px;
+  }
+  .card .foot button {
+    border: 0; background: transparent; font-family: inherit; font-size: 12px; color: #444;
+    padding: 5px 8px; border-radius: 5px; cursor: pointer;
+  }
+  .card .foot button:hover { background: #ececec; }
+  .card .foot .k { color: #a0a0a5; margin-left: 4px; }
+  .card .foot .all { margin-left: auto; color: #2f6fde; font-weight: 600; }
+
+  /* how it works */
+  .how {
+    position: absolute; left: 870px; top: 70px; width: 350px; color: #fff;
+    background: rgba(20,20,30,.55); backdrop-filter: blur(16px);
+    border-radius: 12px; padding: 18px 20px; font-size: 13.5px; line-height: 1.5;
+  }
+  .how h3 { margin: 0 0 10px; font-size: 15px; }
+  .how ol { margin: 0 0 12px; padding-left: 18px; }
+  .how li { margin-bottom: 7px; }
+  .how .lg { display: flex; gap: 14px; margin-bottom: 12px; font-size: 12.5px; }
+  .how .lg span { display: inline-flex; align-items: center; gap: 6px; }
+  .how .lg i { width: 18px; height: 3px; border-radius: 2px; display: inline-block; }
+  .how .try { border-top: 1px solid rgba(255,255,255,.2); padding-top: 10px; font-size: 12.5px; color: #e6e6f0; }
+  .how a { color: #9fc2ff; cursor: pointer; text-decoration: underline; }
+
+  .toast {
+    position: absolute; left: 60px; top: 600px; width: 780px; text-align: center; pointer-events: none;
+    opacity: 0; transition: opacity .3s;
+  }
+  .toast span { background: rgba(20,20,30,.85); color: #fff; padding: 7px 14px; border-radius: 16px; font-size: 13px; }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="spark" viewBox="0 0 24 24">
+    <g stroke="currentColor" stroke-width="2.6" stroke-linecap="round">
+      <line x1="12" y1="2.5" x2="12" y2="21.5"/><line x1="2.5" y1="12" x2="21.5" y2="12"/>
+      <line x1="5.3" y1="5.3" x2="18.7" y2="18.7"/><line x1="18.7" y1="5.3" x2="5.3" y2="18.7"/>
+    </g>
+  </symbol>
+</svg>
+
+<div class="menubar">
+  <b>Mail</b><span>File</span><span>Edit</span><span>View</span><span>Message</span><span>Format</span><span>Window</span>
+  <span class="spacer"></span>
+  <span class="mb-app" id="mbApp" title="Claude grammar checker">
+    <svg width="14" height="14" style="color:#1d1d1f"><use href="#spark"/></svg><span class="n" id="mbCount">10</span>
+  </span>
+  <span>Wi-Fi</span><span>100%</span><span>Thu Oct 1&nbsp;&nbsp;9:41 AM</span>
+</div>
+
+<div class="menu" id="menu">
+  <div class="head">Claude grammar checker</div>
+  <div class="item"><span>✓ On</span></div>
+  <div class="item"><span>Skip in Mail</span></div>
+  <div class="item"><span>Pause for 1 hour</span></div>
+  <hr>
+  <div class="item" id="menuFix"><span>Fix this paragraph</span><span class="k">⌃⌥F</span></div>
+  <hr>
+  <div class="item"><span>My dictionary…</span></div>
+  <div class="item"><span>Settings…</span></div>
+  <div class="item"><span>Quit</span><span class="k">⌘Q</span></div>
+</div>
+
+<div class="win">
+  <div class="titlebar">
+    <span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span>
+    <span class="t">New Message</span>
+  </div>
+  <div class="field"><span class="l">To:</span><span></span></div>
+  <div class="field"><span class="l">Subject:</span><span>Grammarly replacement</span></div>
+  <div class="compose">
+    <div class="text" id="text"></div>
+    <div class="badge" id="badge" title="Fix all"><span id="bn">10</span><span class="lbl">Fix all</span></div>
+  </div>
+</div>
+
+<div class="card" id="card">
+  <div class="top">
+    <span class="kd" id="cDot"></span><span class="kind" id="cKind"></span>
+    <span class="by"><svg width="11" height="11" style="color:#d97757"><use href="#spark"/></svg>Claude Haiku</span>
+  </div>
+  <div class="change"><span class="old" id="cOld"></span><span>→</span><button class="new" id="cNew"></button></div>
+  <div class="why" id="cWhy"></div>
+  <div class="foot">
+    <button id="cAccept">Accept<span class="k">Tab</span></button>
+    <button id="cDismiss">Ignore<span class="k">Esc</span></button>
+    <button id="cDict">Add to dictionary</button>
+    <button class="all" id="cAll">Fix all</button>
+  </div>
+</div>
+
+<div class="how">
+  <h3>How it works</h3>
+  <ol>
+    <li>Type in any app. Nothing to open or paste into.</li>
+    <li>When you pause, the paragraph goes to Claude Haiku. Underlines show up about a second later.</li>
+    <li>Hover an underline to see the fix. Click the blue fix or press Tab to take it.</li>
+    <li>The badge in the corner of the text box counts what's left. Click it to fix everything at once.</li>
+    <li>The menu bar icon lets you turn it off, pause it, or skip an app.</li>
+  </ol>
+  <div class="lg">
+    <span><i style="background:#e5484d"></i>Spelling</span>
+    <span><i style="background:#f0a020"></i>Grammar</span>
+    <span><i style="background:#3e7bfa"></i>Capitals</span>
+  </div>
+  <div class="try">Try it: hover any underline, click the menu bar icon, or click the badge. <a id="reset">Reset</a></div>
+</div>
+
+<div class="toast" id="toast"><span id="toastMsg"></span></div>
+
+<script>
+const KINDS = {
+  sp:  { label: 'Spelling', color: '#e5484d' },
+  gr:  { label: 'Grammar',  color: '#f0a020' },
+  cap: { label: 'Capitals', color: '#3e7bfa' },
+};
+// [text, kind, fix, why]  plain strings between issues
+const SOURCE = [
+  'Is there any ', ['AI based', 'gr', 'AI-based', 'Use a hyphen when two words describe the next word together.'],
+  ' ', ['mac os', 'sp', 'macOS', 'Apple spells it as one word: macOS.'],
+  ' option to replace ', ['grammerly', 'sp', 'Grammarly', 'Misspelled. It\'s a brand name, so it also takes a capital G.'],
+  '? ', ['grammerly', 'sp', 'Grammarly', 'Misspelled, and a sentence starts with a capital.'],
+  ' highlights ', ['gramatical', 'sp', 'grammatical', 'Misspelled. It has two m\'s.'],
+  ' errors while I type anywhere in the ', ['os', 'cap', 'OS', 'Short for operating system, so it\'s written in capitals.'],
+  '. I don\'t like ', ['grammerly', 'sp', 'Grammarly', 'Misspelled. It\'s a brand name, so it also takes a capital G.'],
+  '. I would rather use ', ['claude', 'cap', 'Claude', 'Names start with a capital.'],
+  ' and I\'m open to ', ['created', 'gr', 'creating', 'After "open to," use the -ing form: "open to creating."'],
+  ' a custom app that runs on my ', ['mac', 'cap', 'Mac', 'The computer\'s name starts with a capital.'],
+  ' and watches everything I type.',
+];
+
+const $ = id => document.getElementById(id);
+const text = $('text'), card = $('card');
+let current = null, hideTimer = null;
+
+function build() {
+  text.innerHTML = '';
+  SOURCE.forEach(part => {
+    if (typeof part === 'string') { text.append(part); return; }
+    const [word, kind, fix, why] = part;
+    const s = document.createElement('span');
+    s.className = 'iss ' + kind;
+    s.textContent = word;
+    Object.assign(s.dataset, { kind, fix, why });
+    s.addEventListener('mouseenter', () => show(s));
+    s.addEventListener('mouseleave', scheduleHide);
+    s.addEventListener('click', () => show(s));
+    text.append(s);
+  });
+  count();
+}
+
+function count() {
+  const n = text.querySelectorAll('.iss').length;
+  $('bn').textContent = n || '✓';
+  $('mbCount').textContent = n || '';
+  $('badge').classList.toggle('ok', n === 0);
+  $('badge').querySelector('.lbl').textContent = n ? 'Fix all' : 'All good';
+  $('cAll').textContent = 'Fix all ' + n;
+}
+
+function show(s) {
+  clearTimeout(hideTimer);
+  if (current) current.classList.remove('active');
+  current = s; s.classList.add('active');
+  const k = KINDS[s.dataset.kind];
+  $('cDot').style.background = k.color;
+  $('cKind').textContent = k.label;
+  $('cOld').textContent = s.textContent;
+  $('cNew').textContent = s.dataset.fix;
+  $('cWhy').textContent = s.dataset.why;
+  $('cDict').style.display = s.dataset.kind === 'sp' ? '' : 'none';
+  card.classList.add('show');
+  const rects = s.getClientRects(), r = rects[rects.length - 1];
+  const w = document.querySelector('.win').getBoundingClientRect();
+  const left = Math.min(Math.max(r.left - 14, w.left + 8), w.right - card.offsetWidth - 8);
+  card.style.left = left + 'px';
+  card.style.top = (r.bottom + 8) + 'px';
+}
+
+function scheduleHide() { hideTimer = setTimeout(hide, 250); }
+function hide() {
+  card.classList.remove('show');
+  if (current) current.classList.remove('active');
+  current = null;
+}
+card.addEventListener('mouseenter', () => clearTimeout(hideTimer));
+card.addEventListener('mouseleave', scheduleHide);
+
+function apply(s) {
+  const f = document.createElement('span');
+  f.className = 'fixed';
+  f.textContent = s.dataset.fix;
+  s.replaceWith(f);
+  setTimeout(() => f.classList.add('fade'), 50);
+}
+function unwrap(s) { s.replaceWith(document.createTextNode(s.textContent)); }
+
+function toast(msg) {
+  $('toastMsg').textContent = msg;
+  $('toast').classList.add('show');
+  setTimeout(() => $('toast').classList.remove('show'), 1800);
+}
+
+function fixAll() {
+  const all = [...text.querySelectorAll('.iss')];
+  if (!all.length) return;
+  all.forEach(apply); hide(); count();
+  toast('Fixed ' + all.length);
+}
+
+$('cNew').onclick = $('cAccept').onclick = () => { if (current) { const s = current; hide(); apply(s); count(); } };
+$('cDismiss').onclick = () => { if (current) { const s = current; hide(); unwrap(s); count(); } };
+$('cDict').onclick = () => { if (current) { const s = current, w = s.textContent; hide(); unwrap(s); count(); toast('Added "' + w + '" to your dictionary'); } };
+$('cAll').onclick = $('badge').onclick = fixAll;
+$('menuFix').onclick = () => { $('menu').classList.remove('show'); $('mbApp').classList.remove('open'); fixAll(); };
+
+document.addEventListener('keydown', e => {
+  if (!card.classList.contains('show')) return;
+  if (e.key === 'Tab') { e.preventDefault(); $('cAccept').click(); }
+  if (e.key === 'Escape') $('cDismiss').click();
+});
+
+$('mbApp').onclick = e => {
+  e.stopPropagation();
+  const m = $('menu'), a = $('mbApp');
+  m.style.left = Math.min(a.getBoundingClientRect().left, innerWidth - 268) + 'px';
+  m.classList.toggle('show'); a.classList.toggle('open');
+};
+document.addEventListener('click', () => { $('menu').classList.remove('show'); $('mbApp').classList.remove('open'); });
+$('reset').onclick = () => { hide(); build(); };
+
+build();
+// open on the "created" fix so the first view shows the hover card
+const params = new URLSearchParams(location.search);
+if (!params.has('nocard')) {
+  const demo = [...text.querySelectorAll('.iss')].find(s => s.textContent === 'created');
+  requestAnimationFrame(() => show(demo));
+}
+if (params.has('menu')) $('mbApp').click();
+if (params.has('fixed')) fixAll();
+</script>
+</body>
+</html>
