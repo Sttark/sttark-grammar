@@ -43,7 +43,7 @@ Select any text, right-click, and choose **Translate to Chinese with Claude**. O
 
 The Chinese is copied, so you can paste it straight away. If the text you selected can be edited, **Replace selection** swaps it for the Chinese. Select Chinese text and you get English instead.
 
-Translation uses Claude Opus 5, which wrote more natural Chinese than Haiku in testing. It costs about 1 cent for a short message.
+Translation uses Claude Opus 5, which wrote more natural Chinese than Haiku in testing. A short message costs about half a cent.
 
 The menu bar icon (an I-beam cursor) has:
 - On/off
