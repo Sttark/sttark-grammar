@@ -37,6 +37,7 @@ final class Controller: NSObject, NSMenuDelegate {
     var tap: CFMachPort?
     var badgeState = ""
     var loggedMissing: Set<UUID> = []
+    let translator = Translator()
 
     var enabled: Bool {
         get { defaults.object(forKey: "enabled") as? Bool ?? true }
@@ -70,6 +71,8 @@ final class Controller: NSObject, NSMenuDelegate {
             AXIsProcessTrustedWithOptions(opts)
         }
         loadDictionary()
+        NSApp.servicesProvider = translator
+        NSUpdateDynamicServices()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let menu = NSMenu()
         menu.delegate = self
@@ -559,6 +562,7 @@ final class Controller: NSObject, NSMenuDelegate {
             DispatchQueue.main.async { self.fixParagraph() }
             return true
         }
+        if code == 53 && f.isEmpty && translator.visible { DispatchQueue.main.async { self.translator.close() }; return true }
         guard let id = hoverID, f.isEmpty else { return false }
         if code == 48, issues.first(where: { $0.id == id })?.hasFix == true { DispatchQueue.main.async { self.accept(id) }; return true }
         if code == 53 { DispatchQueue.main.async { self.ignore(id) }; return true }

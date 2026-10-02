@@ -35,6 +35,16 @@ The app is also attached to each [release](https://github.com/Sttark/claude-gram
 - The badge in the corner of the text box shows how many mistakes there are. Click it to fix them all.
 - **Control-Option-F** fixes the paragraph you're in.
 
+### Translate to Chinese
+
+Select any text, right-click, and choose **Translate to Chinese with Claude**. On some Macs it's inside a **Services** submenu at the bottom of the right-click menu. About 4 seconds later a card next to the mouse shows:
+- the Chinese
+- an English translation of that Chinese, so you can check it says what you meant
+
+The Chinese is copied, so you can paste it straight away. If the text you selected can be edited, **Replace selection** swaps it for the Chinese. Select Chinese text and you get English instead.
+
+Translation uses Claude Opus 5, which wrote more natural Chinese than Haiku in testing. It costs about 1 cent for a short message.
+
 The menu bar icon (an I-beam cursor) has:
 - On/off
 - Skip the app you're in
@@ -90,6 +100,7 @@ On a test paragraph with 12 mistakes, Haiku 4.5 caught 11 or 12 in about 3 s. So
 - `Sources/Checker.swift`: Claude request, prompt, API key storage, and the word-by-word comparison
 - `Sources/Controller.swift`: main loop, underline layout, hover card, fixes, keys, menu
 - `Sources/UI.swift`: underline overlay, hover card, badge
+- `Sources/Translate.swift`: the right-click translate item and its card. It's declared under `NSServices` in `Info.plist`.
 - `build.sh`: builds `build/ClaudeGrammar.app` for Apple Silicon and Intel
 - `install.sh`, `uninstall.sh`
 - `mockup.html`: the original design mockup

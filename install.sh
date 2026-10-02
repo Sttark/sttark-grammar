@@ -12,6 +12,7 @@ tccutil reset Accessibility com.sttark.claude-grammar >/dev/null 2>&1 || true
 osascript -e 'tell application "System Events"
   if not (exists login item "ClaudeGrammar") then make login item at end with properties {path:(POSIX path of (path to home folder)) & "Applications/ClaudeGrammar.app", hidden:false}
 end tell' >/dev/null
+/System/Library/CoreServices/pbs -update   # make the right-click translate item show up right away
 open ~/Applications/ClaudeGrammar.app
 echo
 echo "Installed. Two things to do:"
