@@ -233,7 +233,6 @@ final class Reading {
         try? await Task.sleep(nanoseconds: 150_000_000)   // let the last sound leave the speaker
         if cancelled { return }
         stop()
-        if failure == nil { NSSound(named: "Glass")?.play() }
         finished(failure)
     }
 

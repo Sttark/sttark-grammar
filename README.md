@@ -51,7 +51,7 @@ Translation uses Claude Opus 5, which wrote more natural Chinese than Haiku in t
 
 ### Read aloud
 
-Select text in any app and press **Command-`** (the key above Tab), or choose **Read selection aloud** from the menu bar icon. Reading starts in about a second. Press it again to stop. A chime plays when it finishes, and the menu bar icon turns into a speaker while it reads.
+Select text in any app and press **Command-`** (the key above Tab), or choose **Read selection aloud** from the menu bar icon. Reading starts in about a second. Press it again to stop. The menu bar icon turns into a speaker while it reads.
 
 Claude can't speak, so read aloud uses OpenAI's voice model (gpt-realtime-2.1-mini). The first time you use it, the app asks for an OpenAI API key from [platform.openai.com](https://platform.openai.com). It's saved in your Mac's Keychain. The rest of the app doesn't need it.
 
