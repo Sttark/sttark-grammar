@@ -80,6 +80,12 @@ final class Controller: NSObject, NSMenuDelegate {
         menu.delegate = self
         statusItem.menu = menu
         overlay.contentView = underlines
+        // Read both keys before watching the keyboard. After a rebuild macOS asks for your
+        // password to unlock them, and that question freezes this thread until you answer.
+        // With the key watcher already running, every key press on the Mac waits on this
+        // thread too, so you couldn't type the password and the keyboard locked up.
+        _ = Checker.apiKey
+        _ = Speaker.apiKey
         installKeyTap()
         timer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in self?.tick() }
         RunLoop.main.add(timer!, forMode: .common)
@@ -233,7 +239,12 @@ final class Controller: NSObject, NSMenuDelegate {
         let role = AX.string(el, kAXRoleAttribute) ?? ""
         let sub = AX.string(el, kAXSubroleAttribute) ?? ""
         if role == "AXSecureTextField" || sub == "AXSecureTextField" || sub == "AXSearchField" { return false }
-        return AX.selectedRange(el) != nil
+        // Messages' bubbles claim they can be edited; they can't
+        if AX.string(el, kAXIdentifierAttribute) == "CKBalloonTextView" { return false }
+        // only text you can type in: selected text on a web page or in a message has a selection but can't be edited
+        var settable: DarwinBoolean = false
+        AXUIElementIsAttributeSettable(el, kAXValueAttribute as CFString, &settable)
+        return settable.boolValue && AX.selectedRange(el) != nil
     }
 
     func reset() {
