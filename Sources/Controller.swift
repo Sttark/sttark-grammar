@@ -372,6 +372,7 @@ final class Controller: NSObject, NSMenuDelegate {
         case "tab": if let id = hoverID { accept(id) }
         case "esc": if let id = hoverID { ignore(id) }
         case "fixall": fixAll()
+        case "translate": translateMenu()
         case "dump":
             log("value: \(value)")
             for i in issues { log("  \(i.range) \(i.kind) \(i.original) -> \(i.suggestion) rects=\(rects[i.id] ?? [])") }
@@ -629,6 +630,7 @@ final class Controller: NSObject, NSMenuDelegate {
             item("Pause for 1 hour", #selector(pause))
         }
         menu.addItem(.separator())
+        item("Translate selection to Chinese", #selector(translateMenu))
         item("Fix this paragraph", #selector(fixParagraphMenu), key: "f", mods: [.control, .option])
         menu.addItem(.separator())
         let models = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
@@ -654,6 +656,11 @@ final class Controller: NSObject, NSMenuDelegate {
     @objc func pause() { pausedUntil = Date().addingTimeInterval(3600); reset(); updateStatus() }
     @objc func resume() { pausedUntil = nil; updateStatus() }
     @objc func fixParagraphMenu() { fixParagraph() }
+    @objc func translateMenu() {
+        // the card goes under the menu bar icon; the menu has closed, so the app you were in has focus again
+        let f = statusItem.button?.window?.frame ?? .zero
+        DispatchQueue.main.async { self.translator.translateSelection(anchor: CGPoint(x: f.minX - 8, y: f.minY)) }
+    }
     @objc func quit() { NSApp.terminate(nil) }
     @objc func toggleSkip(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }

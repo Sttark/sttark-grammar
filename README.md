@@ -37,11 +37,15 @@ The app is also attached to each [release](https://github.com/Sttark/claude-gram
 
 ### Translate to Chinese
 
-Select any text, right-click, and choose **Translate to Chinese with Claude**. On some Macs it's inside a **Services** submenu at the bottom of the right-click menu. About 4 seconds later a card next to the mouse shows:
-- the Chinese
-- an English translation of that Chinese, so you can check it says what you meant
+Select any text, then either:
+- click the menu bar icon and choose **Translate selection to Chinese** (works in every app), or
+- right-click and choose **Translate to Chinese with Claude**. On some Macs it's inside a **Services** submenu. Some apps, like the Claude app and Slack, don't show it at all.
 
-The Chinese is copied, so you can paste it straight away. If the text you selected can be edited, **Replace selection** swaps it for the Chinese. Select Chinese text and you get English instead.
+If the selected text can be edited, it gets replaced with the Chinese. A note shows what the Chinese says in English, so you can check it, and fades after 8 seconds.
+
+If the text can't be edited, like a web page, a card shows the Chinese and the English check instead.
+
+Either way the Chinese is also copied. Select Chinese text and you get English instead.
 
 Translation uses Claude Opus 5, which wrote more natural Chinese than Haiku in testing. A short message costs about half a cent.
 
@@ -49,6 +53,7 @@ The menu bar icon (an I-beam cursor) has:
 - On/off
 - Skip the app you're in
 - Pause for 1 hour
+- Translate selection to Chinese
 - Model choice
 - Today's checks and cost
 - Your dictionary

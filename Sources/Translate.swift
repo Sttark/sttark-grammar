@@ -30,14 +30,53 @@ final class Translator: NSObject {
         return !letters.isEmpty && Double(han.count) / Double(letters.count) > 0.3
     }
 
-    // MARK: the right-click menu calls this
+    // MARK: the two ways in
 
+    /// Right-click > Translate to Chinese with Claude (a macOS Service).
     @objc(translateToChinese:userData:error:)
     func translateToChinese(_ pboard: NSPasteboard, userData: String?, error: AutoreleasingUnsafeMutablePointer<NSString?>?) {
-        log("translate called, types: \(pboard.types ?? [])")
         guard let text = pboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return }
+        run(text, editable: selectionIs(text), anchor: NSEvent.mouseLocation)
+    }
+
+    /// Menu bar > Translate selection to Chinese. Works in apps without the right-click item, like the Claude app.
+    func translateSelection(anchor: CGPoint) {
+        if let el = AX.focused(), AX.pid(el) != getpid(),
+           let sel = AX.string(el, kAXSelectedTextAttribute)?.trimmingCharacters(in: .whitespacesAndNewlines), !sel.isEmpty {
+            run(sel, editable: isEditable(el), anchor: anchor)
+            return
+        }
+        // the app won't say what's selected: copy it
+        let pb = NSPasteboard.general
+        let count = pb.changeCount
+        postKey(8, .maskCommand)                                   // Command-C
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            guard pb.changeCount != count, let text = pb.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+                self.anchor = anchor
+                self.show(.failed(title: "Nothing selected", "Select some text, then choose Translate again."))
+                return
+            }
+            self.run(text, editable: false, anchor: anchor)
+        }
+    }
+
+    func isEditable(_ el: AXUIElement) -> Bool {
+        var settable: DarwinBoolean = false
+        AXUIElementIsAttributeSettable(el, kAXValueAttribute as CFString, &settable)
+        let role = AX.string(el, kAXRoleAttribute) ?? ""
+        return settable.boolValue || ["AXTextArea", "AXTextField", "AXComboBox"].contains(role)
+    }
+
+    /// The text is still selected in a box you can type in.
+    func selectionIs(_ text: String) -> Bool {
+        guard let el = AX.focused(), AX.pid(el) != getpid(), isEditable(el) else { return false }
+        return AX.string(el, kAXSelectedTextAttribute)?.trimmingCharacters(in: .whitespacesAndNewlines) == text
+    }
+
+    /// Translate, copy the result, and swap it in for the selection when the selection can be edited.
+    func run(_ text: String, editable: Bool, anchor: CGPoint) {
         original = text
-        anchor = NSEvent.mouseLocation
+        self.anchor = anchor
         busy = true
         show(.working)
         Task {
@@ -49,10 +88,18 @@ final class Translator: NSObject {
                     self.result = toEnglish ? en : zh
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(self.result, forType: .string)
-                    self.show(.done(main: self.result, check: toEnglish ? nil : en, toEnglish: toEnglish, canReplace: self.selectionStillThere()))
+                    let check = toEnglish ? nil : en
+                    guard editable, self.selectionIs(text) else {
+                        self.show(.done(main: self.result, check: check, toEnglish: toEnglish, replaced: false))
+                        return
+                    }
+                    self.replaceSelection { ok in
+                        self.show(.done(main: self.result, check: check, toEnglish: toEnglish, replaced: ok))
+                        if ok { self.closeSoon() }
+                    }
                 }
             } catch {
-                await MainActor.run { self.busy = false; self.show(.failed("\(error)")) }
+                await MainActor.run { self.busy = false; self.show(.failed(title: "Translation failed", "\(error)")) }
             }
         }
     }
@@ -95,39 +142,46 @@ final class Translator: NSObject {
 
     // MARK: replace the selected text in place
 
-    /// The text you right-clicked is still selected in a box you can type in.
-    func selectionStillThere() -> Bool {
-        guard let el = AX.focused(), AX.pid(el) != getpid() else { return false }
-        return AX.string(el, kAXSelectedTextAttribute)?.trimmingCharacters(in: .whitespacesAndNewlines) == original
+    func postKey(_ code: CGKeyCode, _ flags: CGEventFlags) {
+        let src = CGEventSource(stateID: .combinedSessionState)
+        for down in [true, false] {
+            let e = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: down)
+            e?.flags = flags
+            e?.post(tap: .cghidEventTap)
+        }
     }
 
-    func replace() {
-        guard selectionStillThere(), let el = AX.focused() else { NSSound.beep(); return }
+    func replaceSelection(done: @escaping (Bool) -> Void) {
+        guard let el = AX.focused() else { done(false); return }
         let before = AX.string(el, kAXValueAttribute)
-        if !(AX.setSelectedText(el, result) && AX.string(el, kAXValueAttribute) != before) {
-            // the app ignored the Accessibility API; the selection is still the original text, so paste over it
-            let src = CGEventSource(stateID: .combinedSessionState)
-            for down in [true, false] {
-                let e = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: down)
-                e?.flags = .maskCommand
-                e?.post(tap: .cghidEventTap)
-            }
+        let ok = AX.setSelectedText(el, result)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            if ok && AX.string(el, kAXValueAttribute) != before { done(true); return }
+            // the app ignored the Accessibility API; the original is still selected and the result is on the clipboard
+            guard self.selectionIs(self.original) else { done(false); return }
+            self.postKey(9, .maskCommand)                          // Command-V
+            done(true)
         }
-        close()
+    }
+
+    func closeSoon() {
+        let shown = panel.contentView
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            guard let self, self.panel.contentView === shown, !self.panel.frame.contains(NSEvent.mouseLocation) else { return }
+            self.close()
+        }
     }
 
     // MARK: card
 
     enum State {
         case working
-        case done(main: String, check: String?, toEnglish: Bool, canReplace: Bool)
-        case failed(String)
+        case done(main: String, check: String?, toEnglish: Bool, replaced: Bool)
+        case failed(title: String, String)
     }
 
     func show(_ state: State) {
-        let view = TranslateCard(state: state,
-                                 replace: { [weak self] in self?.replace() },
-                                 close: { [weak self] in self?.close() })
+        let view = TranslateCard(state: state, close: { [weak self] in self?.close() })
         let host = ClickThroughHostingView(rootView: view)
         let size = host.fittingSize
         let screen = NSScreen.screens.first { $0.frame.contains(anchor) }?.visibleFrame ?? NSScreen.main!.visibleFrame
@@ -153,7 +207,6 @@ final class Translator: NSObject {
 
 struct TranslateCard: View {
     let state: Translator.State
-    let replace: () -> Void
     let close: () -> Void
 
     var body: some View {
@@ -165,16 +218,17 @@ struct TranslateCard: View {
                     Text("Translating with Claude…").font(.system(size: 13)).foregroundStyle(.secondary)
                 }
                 .padding(14)
-            case .failed(let msg):
-                Text("Translation failed").font(.system(size: 13, weight: .semibold)).padding([.horizontal, .top], 14)
+            case .failed(let title, let msg):
+                Text(title).font(.system(size: 13, weight: .semibold)).padding([.horizontal, .top], 14)
                 Text(msg).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 14).padding(.top, 4).padding(.bottom, 12)
-                footer(canReplace: false)
-            case .done(let main, let check, let toEnglish, let canReplace):
+                footer
+            case .done(let main, let check, let toEnglish, let replaced):
                 HStack {
-                    Text(toEnglish ? "ENGLISH" : "CHINESE").font(.system(size: 11, weight: .semibold)).tracking(0.5).foregroundStyle(.secondary)
+                    Text(replaced ? (toEnglish ? "REPLACED WITH ENGLISH" : "REPLACED WITH CHINESE") : (toEnglish ? "ENGLISH" : "CHINESE"))
+                        .font(.system(size: 11, weight: .semibold)).tracking(0.5).foregroundStyle(.secondary)
                     Spacer()
-                    Text("Copied").font(.system(size: 11)).foregroundStyle(.tertiary)
+                    Text(replaced ? "Also copied" : "Copied").font(.system(size: 11)).foregroundStyle(.tertiary)
                 }
                 .padding(.horizontal, 14).padding(.top, 12)
                 ScrollView {
@@ -194,7 +248,7 @@ struct TranslateCard: View {
                     .padding(.horizontal, 14).padding(.top, 2)
                 }
                 Spacer().frame(height: 12)
-                footer(canReplace: canReplace)
+                footer
             }
         }
         .frame(width: 380)
@@ -203,11 +257,10 @@ struct TranslateCard: View {
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 0.5))
     }
 
-    func footer(canReplace: Bool) -> some View {
+    var footer: some View {
         VStack(spacing: 0) {
             Divider()
             HStack(spacing: 2) {
-                if canReplace { FootButton(title: "Replace selection", key: nil, action: replace) }
                 Spacer()
                 FootButton(title: "Close", key: "Esc", action: close)
             }
