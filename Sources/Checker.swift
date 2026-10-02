@@ -69,7 +69,7 @@ enum CheckError: Error, CustomStringConvertible {
 enum Checker {
     static let system = """
     You proofread text the user is typing in another app.
-    First write "corrected": the full text with only clear mistakes fixed. Fix misspellings, wrong grammar, wrong word forms, missing hyphens, and words that need a capital letter (names, brands, products, the word I, sentence starts). Keep the user's words, tone and casual style. Do not reword, shorten, or improve style. If the text does not end with a period, do not add one. Keep punctuation that is already correct. Keep all spacing and line breaks.
+    First write "corrected": the full text with only clear mistakes fixed. Fix misspellings, wrong grammar, wrong word forms, missing hyphens, and words that need a capital letter (names, brands, products, the word I, sentence starts). Keep the user's words, tone and casual style. Do not reword, shorten, or improve style. If the last sentence is complete but has no period, question mark or exclamation point at the end, add one. If it is still being typed, leave the end alone. Keep punctuation that is already correct. Keep all spacing and line breaks.
     Then list every change you made in "issues", in the order they appear. For each: "original" is the exact wrong text copied character for character from the input, as short as possible (only the wrong word or words). "suggestion" is what replaces it. "kind" is spelling, grammar, or capitals. "reason" is at most 12 plain words. If the same mistake appears more than once, list each one. If nothing is wrong, return the text unchanged and an empty list.
     The text may be unfinished: ignore a cut-off last word.
     """
@@ -204,6 +204,13 @@ enum Diff {
     }
 
     static func issues(original: String, corrected: String, notes: [(String, String, Kind, String)]) -> [Issue] {
+        // Claude sometimes ends its copy with a space or line break the text doesn't have, even when it
+        // adds a period. Give the copy the text's own spacing at both ends so "outside." -> "outside. " never shows.
+        func edge(_ x: String, _ fromEnd: Bool) -> String {
+            String(fromEnd ? x.reversed().prefix { $0.isWhitespace }.reversed() : Array(x.prefix { $0.isWhitespace }))
+        }
+        let core = corrected.trimmingCharacters(in: .whitespacesAndNewlines)
+        let corrected = core.isEmpty ? corrected : edge(original, false) + core + edge(original, true)
         let a = tokenize(original), b = tokenize(corrected)
         let n = a.count, m = b.count
         guard n > 0, n <= 2000, m <= 2400 else { return [] }
