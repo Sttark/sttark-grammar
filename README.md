@@ -32,6 +32,7 @@ The app is also attached to each [release](https://github.com/Sttark/claude-gram
 - Type anywhere. About 3 seconds after you pause, mistakes get underlined.
 - Hover an underline to see the fix. Click the blue fix, or press **Tab**, to take it. **Esc** ignores it.
 - **Add to dictionary** stops a word from being flagged. Use it for names and jargon.
+- Web addresses, email addresses and file paths are never flagged.
 - The badge in the corner of the text box shows how many mistakes there are. Click it to fix them all.
 - **Control-Option-F** fixes the paragraph you're in. You can change it (see Shortcuts).
 

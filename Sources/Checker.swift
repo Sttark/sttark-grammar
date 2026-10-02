@@ -69,7 +69,7 @@ enum CheckError: Error, CustomStringConvertible {
 enum Checker {
     static let system = """
     You proofread text the user is typing in another app.
-    First write "corrected": the full text with only clear mistakes fixed. Fix misspellings, wrong grammar, wrong word forms, missing hyphens, and words that need a capital letter (names, brands, products, the word I, sentence starts). Keep the user's words, tone and casual style. Do not reword, shorten, or improve style. If the last sentence is complete but has no period, question mark or exclamation point at the end, add one. If it is still being typed, leave the end alone. Keep punctuation that is already correct. Keep all spacing and line breaks.
+    First write "corrected": the full text with only clear mistakes fixed. Fix misspellings, wrong grammar, wrong word forms, missing hyphens, and words that need a capital letter (names, brands, products, the word I, sentence starts). Keep the user's words, tone and casual style. Leave web addresses, email addresses, file paths and code exactly as typed. Sttark is the user's company and is spelled right, as are its addresses like sttark.com. Do not reword, shorten, or improve style. Treat the text as finished: if the last sentence has no period, question mark or exclamation point at the end, add one. Only leave it off when the text clearly stops partway, like ending on "the", "to" or "and". Keep punctuation that is already correct. Keep all spacing and line breaks.
     Then list every change you made in "issues", in the order they appear. For each: "original" is the exact wrong text copied character for character from the input, as short as possible (only the wrong word or words). "suggestion" is what replaces it. "kind" is spelling, grammar, or capitals. "reason" is at most 12 plain words. If the same mistake appears more than once, list each one. If nothing is wrong, return the text unchanged and an empty list.
     The text may be unfinished: ignore a cut-off last word.
     """
@@ -122,13 +122,13 @@ enum Checker {
         return (resp as? HTTPURLResponse)?.statusCode == 200
     }
 
-    static func check(_ text: String, model: Model) async throws -> CheckResult {
+    static func check(_ text: String, model: Model, words: [String] = []) async throws -> CheckResult {
         guard let key = apiKey else { throw CheckError.noKey }
         var outputConfig: [String: Any] = ["format": ["type": "json_schema", "schema": schema]]
         var body: [String: Any] = [
             "model": model.rawValue,
             "max_tokens": 8000,
-            "system": system,
+            "system": words.isEmpty ? system : system + "\nThe user's dictionary. These are spelled right, never change them: " + words.prefix(500).joined(separator: ", "),
             "messages": [["role": "user", "content": "<text>\n\(text)\n</text>"]],
         ]
         if model == .sonnet {
@@ -203,6 +203,63 @@ enum Diff {
         return out
     }
 
+    /// Web and email addresses and file paths: docs.sttark.com, dan@sttark.com, ~/src/app. Nothing in them gets flagged.
+    static func links(in s: String) -> [NSRange] {
+        (try? NSRegularExpression(pattern: #"\S*(?:://|@|/)\S*|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\b"#))?
+            .matches(in: s, range: NSRange(location: 0, length: (s as NSString).length)).map(\.range) ?? []
+    }
+
+    static let abbreviations: Set<String> = ["e.g", "i.e", "etc", "vs", "approx", "a.m", "p.m", "fig", "mr", "mrs", "ms", "dr", "st"]
+
+    /// Claude misses a lowercase sentence start now and then, so the app checks it too.
+    /// Only plain lowercase words: "iPhone" and addresses are left alone, as are words after "e.g." or "...".
+    static func capitalIssues(_ text: String, besides claude: [Issue]) -> [Issue] {
+        let ns = text as NSString
+        let links = links(in: text)
+        guard let re = try? NSRegularExpression(pattern: #"(?:^|[.!?]["'”’)\]]*\s+)([a-z]+(?:['’][a-z]+)?)(?=[\s,;:.!?"'”’)\]]|$)"#) else { return [] }
+        return re.matches(in: text, range: NSRange(location: 0, length: ns.length)).compactMap { m in
+            let r = m.range(at: 1)
+            // the match starts at the period, so the word before it plus "." is "e.g." or "thinking..."
+            if m.range.location > 0, ns.substring(with: m.range).hasPrefix(".") {
+                let prev = (ns.substring(to: m.range.location).split(whereSeparator: \.isWhitespace).last.map(String.init) ?? "").lowercased() + "."
+                if prev.hasSuffix("..") || abbreviations.contains(String(prev.dropLast())) { return nil }
+            }
+            if links.contains(where: { NSIntersectionRange($0, r).length > 0 }) { return nil }
+            if claude.contains(where: { NSIntersectionRange($0.range, r).length > 0 }) { return nil }
+            let word = ns.substring(with: r)
+            return Issue(range: r, original: word, suggestion: word.prefix(1).uppercased() + word.dropFirst(),
+                         kind: .capitals, reason: "Start the sentence with a capital letter.")
+        }
+    }
+
+    /// Words a sentence can't end on, so text ending on one is still being typed.
+    static let unfinished: Set<String> = ["a", "an", "the", "to", "and", "or", "but", "nor", "of", "for", "with", "in", "on", "at",
+        "from", "by", "into", "onto", "about", "as", "so", "because", "than", "that", "which", "who", "whose", "if", "when",
+        "while", "whether", "where", "like", "can", "could", "would", "should", "will", "shall", "may", "might", "must",
+        "is", "are", "was", "were", "be", "been", "am", "do", "does", "did", "have", "has", "had", "my", "your", "our",
+        "their", "his", "her", "its", "this", "these", "those", "some", "any", "every", "each", "no", "not", "very", "i", "we",
+        "you", "they", "he", "she", "it's", "i'm", "we're", "you're", "they're", "there's", "let's", "per", "via", "vs"]
+    static let questionStarts: Set<String> = ["can", "could", "would", "will", "should", "shall", "do", "does", "did", "is",
+        "are", "was", "were", "have", "has", "had", "what", "why", "how", "when", "where", "who", "which", "whose", "am"]
+
+    /// Claude misses a missing period at the end now and then, so the app checks it too.
+    static func endIssues(_ text: String, besides claude: [Issue]) -> [Issue] {
+        let ns = text as NSString
+        guard let last = text.unicodeScalars.reversed().first(where: { !CharacterSet.whitespacesAndNewlines.contains($0) }),
+              CharacterSet.alphanumerics.contains(last) else { return [] }
+        let r = ns.range(of: #"[\p{L}\p{N}'’]+(?=\s*$)"#, options: .regularExpression)
+        guard r.location != NSNotFound else { return [] }
+        let word = ns.substring(with: r)
+        if unfinished.contains(word.lowercased().replacingOccurrences(of: "’", with: "'")) { return [] }
+        if claude.contains(where: { NSIntersectionRange($0.range, r).length > 0 }) { return [] }
+        let start = ns.range(of: #"[.!?]\s+"#, options: [.regularExpression, .backwards], range: NSRange(location: 0, length: r.location))
+        let sentence = ns.substring(from: start.location == NSNotFound ? 0 : start.upperBound)
+        let first = sentence.split(whereSeparator: { !($0.isLetter || $0 == "'") }).first.map { $0.lowercased() } ?? ""
+        let mark = questionStarts.contains(first) ? "?" : "."
+        return [Issue(range: r, original: word, suggestion: word + mark, kind: .grammar,
+                      reason: mark == "?" ? "End the question with a question mark." : "End the sentence with a period.")]
+    }
+
     static func issues(original: String, corrected: String, notes: [(String, String, Kind, String)]) -> [Issue] {
         // Claude sometimes ends its copy with a space or line break the text doesn't have, even when it
         // adds a period. Give the copy the text's own spacing at both ends so "outside." -> "outside. " never shows.
@@ -253,6 +310,9 @@ enum Diff {
         let changed = hunks.reduce(0) { $0 + ($1.1 - $1.0) }
         if changed > max(8, n / 2) { return [] }
 
+        // Claude may "fix" a name inside an address, like sttark in docs.sttark.com
+        let links = links(in: original)
+
         var used = Set<Int>()
         var result: [Issue] = []
         for h in hunks {
@@ -278,6 +338,8 @@ enum Diff {
             let orig = (original as NSString).substring(with: range)
             let sugg = b[bs..<be].map(\.text).joined()
             guard orig != sugg else { continue }
+            // a change inside an address is dropped; a period added after one still counts
+            if links.contains(where: { NSIntersectionRange($0, range).length > 0 }) && !sugg.hasPrefix(orig) { continue }
 
             let note = notes.indices.first { k in
                 guard !used.contains(k) else { return false }
