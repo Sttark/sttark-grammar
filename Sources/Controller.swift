@@ -38,6 +38,8 @@ final class Controller: NSObject, NSMenuDelegate {
     var badgeState = ""
     var loggedMissing: Set<UUID> = []
     let translator = Translator()
+    let speaker = Speaker()
+    var recordingShortcut = false               // the Shortcuts box is open: let keys through to it
 
     var enabled: Bool {
         get { defaults.object(forKey: "enabled") as? Bool ?? true }
@@ -81,8 +83,81 @@ final class Controller: NSObject, NSMenuDelegate {
         installKeyTap()
         timer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in self?.tick() }
         RunLoop.main.add(timer!, forMode: .common)
+        speaker.changed = { [weak self] in self?.updateStatus() }
         updateStatus()
         if Checker.apiKey == nil { DispatchQueue.main.async { self.askForKey() } }
+    }
+
+    @objc func askForOpenAIKey() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.icon = NSImage(systemSymbolName: "speaker.wave.2.fill", accessibilityDescription: nil)
+        alert.messageText = "OpenAI API key for Read aloud"
+        alert.informativeText = "Claude can't speak, so Read aloud sends the text you select to OpenAI's voice model. Paste an API key from platform.openai.com. It's kept in your Mac's Keychain."
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        field.placeholderString = "sk-..."
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let key = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return }
+        Task {
+            let ok = await Speaker.keyWorks(key)
+            await MainActor.run {
+                if ok && Speaker.saveKey(key) {
+                    let a = NSAlert()
+                    let s = Action.readAloud.shortcut.map { " or press \($0.display)" } ?? ""
+                    a.messageText = "Read aloud is ready"
+                    a.informativeText = "Select text in any app and choose Read selection aloud from the menu bar\(s). Do it again to stop."
+                    a.runModal()
+                } else {
+                    let a = NSAlert()
+                    a.messageText = ok ? "Couldn't save the key to the Keychain." : "That key didn't work."
+                    a.informativeText = ok ? "" : "OpenAI turned it down. Check that you copied the whole key."
+                    a.runModal()
+                    self.askForOpenAIKey()
+                }
+            }
+        }
+    }
+
+    // MARK: read aloud
+
+    func readAloud(anchor: CGPoint) {
+        if speaker.isReading { speaker.stop(); return }
+        guard Speaker.apiKey != nil else { askForOpenAIKey(); return }
+        let fail = { (title: String, msg: String) in
+            self.translator.anchor = anchor
+            self.translator.show(.failed(title: title, msg))
+        }
+        let read = { (text: String) in
+            guard !text.hasPrefix("sk-") else { return }        // never read an API key aloud
+            self.speaker.start(text) { error in if let error { fail("Read aloud stopped", error) } }
+        }
+        if let el = AX.focused(), AX.pid(el) != getpid(),
+           let sel = AX.string(el, kAXSelectedTextAttribute)?.trimmingCharacters(in: .whitespacesAndNewlines), !sel.isEmpty {
+            read(sel)
+            return
+        }
+        // the app won't say what's selected: copy it
+        let pb = NSPasteboard.general
+        let count = pb.changeCount
+        translator.postKey(8, .maskCommand)                        // Command-C
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            guard pb.changeCount != count, let text = pb.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+                fail("Nothing selected", "Select some text, then choose Read aloud again.")
+                return
+            }
+            read(text)
+        }
+    }
+
+    /// Where cards go when started from the menu: under the menu bar icon.
+    var menuAnchor: CGPoint {
+        let f = statusItem.button?.window?.frame ?? .zero
+        return CGPoint(x: f.minX - 8, y: f.minY)
     }
 
     @objc func askForKey() {
@@ -535,7 +610,7 @@ final class Controller: NSObject, NSMenuDelegate {
         }
     }
 
-    // MARK: keys: Tab takes the fix, Esc ignores it (only while a card is open), Control-Option-F fixes the paragraph
+    // MARK: keys: Tab takes the fix, Esc ignores it (only while a card is open), plus the shortcuts in the Shortcuts menu
 
     func installKeyTap() {
         guard tap == nil, AXIsProcessTrusted() else { return }
@@ -559,8 +634,17 @@ final class Controller: NSObject, NSMenuDelegate {
     func key(_ e: CGEvent) -> Bool {
         let code = e.getIntegerValueField(.keyboardEventKeycode)
         let f = e.flags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift])
-        if code == 3 && f == [.maskControl, .maskAlternate] && running && element != nil {
+        if recordingShortcut { return false }
+        if Action.fixParagraph.shortcut?.matches(e) == true && running && element != nil {
             DispatchQueue.main.async { self.fixParagraph() }
+            return true
+        }
+        if Action.readAloud.shortcut?.matches(e) == true {
+            DispatchQueue.main.async { self.readAloud(anchor: NSEvent.mouseLocation) }
+            return true
+        }
+        if Action.translate.shortcut?.matches(e) == true {
+            DispatchQueue.main.async { self.translator.translateSelection(anchor: NSEvent.mouseLocation) }
             return true
         }
         if code == 53 && f.isEmpty && translator.visible { DispatchQueue.main.async { self.translator.close() }; return true }
@@ -593,7 +677,7 @@ final class Controller: NSObject, NSMenuDelegate {
 
     func updateStatus() {
         guard let b = statusItem?.button else { return }
-        let symbol = !AXIsProcessTrusted() || Checker.apiKey == nil ? "exclamationmark.triangle" : !running ? "pause.circle" : lastError != nil ? "exclamationmark.triangle" : "character.cursor.ibeam"
+        let symbol = speaker.isReading ? "speaker.wave.2.fill" : !AXIsProcessTrusted() || Checker.apiKey == nil ? "exclamationmark.triangle" : !running ? "pause.circle" : lastError != nil ? "exclamationmark.triangle" : "character.cursor.ibeam"
         if b.image?.accessibilityDescription != symbol {
             b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: symbol)
         }
@@ -630,8 +714,34 @@ final class Controller: NSObject, NSMenuDelegate {
             item("Pause for 1 hour", #selector(pause))
         }
         menu.addItem(.separator())
-        item("Translate selection to Chinese", #selector(translateMenu))
-        item("Fix this paragraph", #selector(fixParagraphMenu), key: "f", mods: [.control, .option])
+        func shortcutItem(_ title: String, _ action: Selector, _ a: Action) {
+            let s = a.shortcut
+            item(title, action, key: s?.key ?? "", mods: s?.menuMods ?? [])
+        }
+        shortcutItem(speaker.isReading ? "Stop reading" : "Read selection aloud", #selector(readAloudMenu), .readAloud)
+        let speeds = NSMenuItem(title: "Reading speed", action: nil, keyEquivalent: "")
+        let speedMenu = NSMenu()
+        for v in Speaker.speeds {
+            let i = NSMenuItem(title: String(format: "%g×", v), action: #selector(pickSpeed(_:)), keyEquivalent: "")
+            i.target = self
+            i.representedObject = v
+            i.state = v == speaker.speed ? .on : .off
+            speedMenu.addItem(i)
+        }
+        speeds.submenu = speedMenu
+        menu.addItem(speeds)
+        shortcutItem("Translate selection to Chinese", #selector(translateMenu), .translate)
+        shortcutItem("Fix this paragraph", #selector(fixParagraphMenu), .fixParagraph)
+        let keys = NSMenuItem(title: "Shortcuts", action: nil, keyEquivalent: "")
+        let keysMenu = NSMenu()
+        for a in Action.allCases {
+            let i = NSMenuItem(title: "\(a.label): \(a.shortcut?.display ?? "none")…", action: #selector(changeShortcut(_:)), keyEquivalent: "")
+            i.target = self
+            i.representedObject = a.rawValue
+            keysMenu.addItem(i)
+        }
+        keys.submenu = keysMenu
+        menu.addItem(keys)
         menu.addItem(.separator())
         let models = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
         let sub = NSMenu()
@@ -648,6 +758,7 @@ final class Controller: NSObject, NSMenuDelegate {
         item(String(format: "Today: %d checks, $%.2f", Int(u["checks"] ?? 0), u["cost"] ?? 0), nil)
         item("My dictionary…", #selector(openDictionary))
         if Checker.apiKey != nil { item("Change API key…", #selector(askForKey)) }
+        if Speaker.apiKey != nil { item("Change OpenAI key for Read aloud…", #selector(askForOpenAIKey)) }
         menu.addItem(.separator())
         item("Quit", #selector(quit), key: "q", mods: .command)
     }
@@ -658,8 +769,54 @@ final class Controller: NSObject, NSMenuDelegate {
     @objc func fixParagraphMenu() { fixParagraph() }
     @objc func translateMenu() {
         // the card goes under the menu bar icon; the menu has closed, so the app you were in has focus again
-        let f = statusItem.button?.window?.frame ?? .zero
-        DispatchQueue.main.async { self.translator.translateSelection(anchor: CGPoint(x: f.minX - 8, y: f.minY)) }
+        let anchor = menuAnchor
+        DispatchQueue.main.async { self.translator.translateSelection(anchor: anchor) }
+    }
+    @objc func readAloudMenu() {
+        let anchor = menuAnchor
+        DispatchQueue.main.async { self.readAloud(anchor: anchor) }
+    }
+    @objc func pickSpeed(_ sender: NSMenuItem) {
+        guard let v = sender.representedObject as? Double else { return }
+        speaker.speed = v                       // used from the next read on
+    }
+    @objc func changeShortcut(_ sender: NSMenuItem) {
+        guard let a = Action(rawValue: sender.representedObject as? String ?? "") else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.icon = NSImage(systemSymbolName: "keyboard", accessibilityDescription: nil)
+        alert.messageText = "Shortcut for \(a.label)"
+        alert.informativeText = "Press the new keys. Use at least one of ⌘ Command, ⌃ Control or ⌥ Option."
+        let field = NSTextField(labelWithString: a.shortcut?.display ?? "None")
+        field.font = .systemFont(ofSize: 22, weight: .medium)
+        field.alignment = .center
+        field.frame = NSRect(x: 0, y: 0, width: 300, height: 30)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "No shortcut")
+        var picked = a.shortcut
+        recordingShortcut = true
+        defer { recordingShortcut = false }
+        let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in
+            // plain keys still work the buttons: Return saves, Esc cancels
+            guard !e.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return e }
+            let s = Shortcut(e)
+            if let other = Action.allCases.first(where: { $0 != a && $0.shortcut == s }) {
+                field.stringValue = "\(s.display) is used by \(other.label)"
+                return nil
+            }
+            picked = s
+            field.stringValue = s.display
+            return nil
+        }
+        let result = alert.runModal()
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        switch result {
+        case .alertFirstButtonReturn: a.shortcut = picked
+        case .alertThirdButtonReturn: a.shortcut = nil
+        default: break
+        }
     }
     @objc func quit() { NSApp.terminate(nil) }
     @objc func toggleSkip(_ sender: NSMenuItem) {
