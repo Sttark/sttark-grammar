@@ -233,7 +233,12 @@ final class Controller: NSObject, NSMenuDelegate {
         let role = AX.string(el, kAXRoleAttribute) ?? ""
         let sub = AX.string(el, kAXSubroleAttribute) ?? ""
         if role == "AXSecureTextField" || sub == "AXSecureTextField" || sub == "AXSearchField" { return false }
-        return AX.selectedRange(el) != nil
+        // Messages' bubbles claim they can be edited; they can't
+        if AX.string(el, kAXIdentifierAttribute) == "CKBalloonTextView" { return false }
+        // only text you can type in: selected text on a web page or in a message has a selection but can't be edited
+        var settable: DarwinBoolean = false
+        AXUIElementIsAttributeSettable(el, kAXValueAttribute as CFString, &settable)
+        return settable.boolValue && AX.selectedRange(el) != nil
     }
 
     func reset() {
