@@ -250,6 +250,10 @@ enum Diff {
         var result: [Issue] = []
         for h in hunks {
             var (as_, ae, bs, be) = h
+            // Claude added or dropped spaces or line breaks at the start or end, or swapped one run of
+            // spacing for another: not a mistake. A space added between "test,ok" still counts.
+            if (a[as_..<ae].map(\.text) + b[bs..<be].map(\.text)).joined().allSatisfy(\.isWhitespace),
+               as_ == 0 || ae == n || (as_ < ae && bs < be) { continue }
             // A change with no word in it (a hyphen, a comma) is shown on the words around it:
             // an added comma on the word before it, a changed space on the words either side.
             if !a[as_..<ae].contains(where: { $0.isWord }) {
