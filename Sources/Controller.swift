@@ -268,7 +268,11 @@ final class Controller: NSObject, NSMenuDelegate {
     }
 
     func allowed(_ i: Issue) -> Bool {
-        !ignored.contains(i.ignoreKey) && !(i.kind == .spelling && dictionary.contains(i.original.lowercased()))
+        if ignored.contains(i.ignoreKey) { return false }
+        if i.kind == .spelling && dictionary.contains(i.original.lowercased()) { return false }
+        // a fix that would change a dictionary word, like "docs.sttark.com" -> "docs.stark.com"
+        let words = { (s: String) in Set(s.lowercased().split { !($0.isLetter || $0.isNumber || $0 == "'" || $0 == "’") }.map(String.init)) }
+        return words(i.original).subtracting(words(i.suggestion)).isDisjoint(with: dictionary)
     }
 
     func issuesFromCache(_ s: NSString) -> [Issue] {
@@ -306,9 +310,10 @@ final class Controller: NSObject, NSMenuDelegate {
             inflight.insert(text)
             log("check \(text.prefix(60))")
             let m = model
+            let known = dictionary.sorted()
             Task {
                 do {
-                    let res = try await Checker.check(text, model: m)
+                    let res = try await Checker.check(text, model: m, words: known)
                     await MainActor.run { self.received(text, res, model: m) }
                 } catch {
                     await MainActor.run {
@@ -328,6 +333,7 @@ final class Controller: NSObject, NSMenuDelegate {
     func spellIssues(_ text: String, besides claude: [Issue]) -> [Issue] {
         let sc = NSSpellChecker.shared
         let ns = text as NSString
+        let links = Diff.links(in: text)
         var out: [Issue] = []
         var start = 0
         while start < ns.length {
@@ -336,6 +342,7 @@ final class Controller: NSObject, NSMenuDelegate {
             start = r.upperBound
             let word = ns.substring(with: r)
             if claude.contains(where: { NSIntersectionRange($0.range, r).length > 0 }) { continue }
+            if links.contains(where: { NSIntersectionRange($0, r).length > 0 }) { continue }
             if word.contains(where: \.isNumber) { continue }
             if r.location > 0, word.first?.isUppercase == true { continue }
             if let guess = sc.guesses(forWordRange: r, in: text, language: nil, inSpellDocumentWithTag: 0)?.first {
@@ -348,7 +355,16 @@ final class Controller: NSObject, NSMenuDelegate {
     }
 
     func received(_ text: String, _ claude: CheckResult, model: Model) {
-        let res = CheckResult(issues: (claude.issues + spellIssues(text, besides: claude.issues)).sorted { $0.range.location < $1.range.location },
+        var caps = Diff.capitalIssues(text, besides: claude.issues)
+        var ends = Diff.endIssues(text, besides: claude.issues)
+        // a one-word last sentence like "ok" needs both: one fix, "Ok."
+        if let e = ends.first, let k = caps.firstIndex(where: { $0.range == e.range }) {
+            caps[k] = Issue(range: e.range, original: e.original, suggestion: caps[k].suggestion + String(e.suggestion.last!),
+                            kind: .capitals, reason: "Start with a capital letter and end with a period.")
+            ends = []
+        }
+        let mine = caps + ends
+        let res = CheckResult(issues: (claude.issues + mine + spellIssues(text, besides: claude.issues + mine)).sorted { $0.range.location < $1.range.location },
                               inputTokens: claude.inputTokens, outputTokens: claude.outputTokens)
         inflight.remove(text)
         lastError = nil
