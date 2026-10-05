@@ -69,8 +69,8 @@ enum CheckError: Error, CustomStringConvertible {
 enum Checker {
     static let system = """
     You proofread text the user is typing in another app.
-    First write "corrected": the full text with only clear mistakes fixed. Fix misspellings, wrong grammar, wrong word forms, missing hyphens, and words that need a capital letter (names, brands, products, the word I, sentence starts). Keep the user's words, tone and casual style. Leave web addresses, email addresses, file paths and code exactly as typed. Sttark is the user's company and is spelled right, as are its addresses like sttark.com. Do not reword, shorten, or improve style. Treat the text as finished: if the last sentence has no period, question mark or exclamation point at the end, add one. Only leave it off when the text clearly stops partway, like ending on "the", "to" or "and". Keep punctuation that is already correct. Keep all spacing and line breaks.
-    Then list every change you made in "issues", in the order they appear. For each: "original" is the exact wrong text copied character for character from the input, as short as possible (only the wrong word or words). "suggestion" is what replaces it. "kind" is spelling, grammar, or capitals. "reason" is at most 12 plain words. If the same mistake appears more than once, list each one. If nothing is wrong, return the text unchanged and an empty list.
+    First write "corrected": the full text with only clear mistakes fixed. Fix misspellings, wrong grammar, wrong word forms, missing hyphens, and words that need a capital letter (names, brands, products, short forms like HVAC, PDF and USB, the word I, sentence starts). Keep the user's words, tone and casual style. Leave web addresses, email addresses, file paths and code exactly as typed. Sttark is the user's company and is spelled right, as are its addresses like sttark.com. Do not reword, shorten, or improve style. Treat the text as finished: if the last sentence has no period, question mark or exclamation point at the end, add one. Only leave it off when the text clearly stops partway, like ending on "the", "to" or "and". Keep punctuation that is already correct. Keep all spacing and line breaks.
+    Then list every change you made in "issues", in the order they appear. For each: "original" is the exact wrong text copied character for character from the input, as short as possible (only the wrong word or words). "suggestion" is what replaces it. "kind" is spelling, grammar, or capitals. "reason" is at most 12 plain words. If the same mistake appears more than once, list each one. If a word is not a real word and you can't tell what was meant, like "somnerhqw", leave it as is in "corrected" and still list it, with "suggestion" the same as "original". If nothing is wrong, return the text unchanged and an empty list.
     The text may be unfinished: ignore a cut-off last word.
     """
 
@@ -165,7 +165,9 @@ enum Checker {
             return (o, s, k, r)
         }
         let usage = json["usage"] as? [String: Any] ?? [:]
-        return CheckResult(issues: Diff.issues(original: text, corrected: corrected, notes: notes),
+        var issues = Diff.issues(original: text, corrected: corrected, notes: notes)
+        issues += Diff.unknownWords(text, notes: notes, besides: issues)
+        return CheckResult(issues: issues.sorted { $0.range.location < $1.range.location },
                            inputTokens: usage["input_tokens"] as? Int ?? 0,
                            outputTokens: usage["output_tokens"] as? Int ?? 0)
     }
@@ -230,6 +232,25 @@ enum Diff {
             return Issue(range: r, original: word, suggestion: word.prefix(1).uppercased() + word.dropFirst(),
                          kind: .capitals, reason: "Start the sentence with a capital letter.")
         }
+    }
+
+    /// Words Claude marked as not real and had no fix for ("somnerhqw"). They aren't in the corrected copy's
+    /// changes, so they're found in the text by name. Addresses are skipped.
+    static func unknownWords(_ text: String, notes: [(String, String, Kind, String)], besides found: [Issue]) -> [Issue] {
+        let ns = text as NSString
+        let links = links(in: text)
+        var out: [Issue] = []
+        for (o, s, _, reason) in notes where o == s && !o.isEmpty && !o.contains(" ") {
+            let pattern = "(?<![\\p{L}\\p{N}])" + NSRegularExpression.escapedPattern(for: o) + "(?![\\p{L}\\p{N}])"
+            guard let re = try? NSRegularExpression(pattern: pattern) else { continue }
+            for m in re.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+                let r = m.range
+                if (found + out).contains(where: { NSIntersectionRange($0.range, r).length > 0 }) { continue }
+                if links.contains(where: { NSIntersectionRange($0, r).length > 0 }) { continue }
+                out.append(Issue(range: r, original: o, suggestion: o, kind: .spelling, reason: reason))
+            }
+        }
+        return out
     }
 
     /// Words a sentence can't end on, so text ending on one is still being typed.
