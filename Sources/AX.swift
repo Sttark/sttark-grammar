@@ -48,6 +48,17 @@ enum AX {
         AXUIElementSetAttributeValue(el, kAXSelectedTextAttribute as CFString, s as CFString) == .success
     }
 
+    /// The text the box itself holds at a range, in its own position count.
+    static func string(_ el: AXUIElement, for r: NSRange) -> String? {
+        var cf = CFRange(location: r.location, length: r.length)
+        guard let arg = AXValueCreate(.cfRange, &cf) else { return nil }
+        var v: AnyObject?
+        guard AXUIElementCopyParameterizedAttributeValue(el, kAXStringForRangeParameterizedAttribute as CFString, arg, &v) == .success else { return nil }
+        return v as? String
+    }
+
+    static func selectedText(_ el: AXUIElement) -> String? { string(el, kAXSelectedTextAttribute) }
+
     /// Screen rect of a text range, in AX coordinates (origin top-left of the main screen).
     static func bounds(_ el: AXUIElement, _ r: NSRange) -> CGRect? {
         var cf = CFRange(location: r.location, length: r.length)
