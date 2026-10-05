@@ -57,6 +57,19 @@ enum AX {
         return v as? String
     }
 
+    /// The box's whole text in its own position count, which can be shorter than its value. Chrome refuses
+    /// a range past the end, so this finds the longest one it accepts. nil if it won't answer at all.
+    static func boxText(_ el: AXUIElement, upTo n: Int) -> String? {
+        if let s = string(el, for: NSRange(location: 0, length: n)) { return s }
+        var lo = 1, hi = n          // string(0, lo) works, string(0, hi) doesn't
+        guard n > 1, string(el, for: NSRange(location: 0, length: 1)) != nil else { return nil }
+        while hi - lo > 1 {
+            let mid = (lo + hi) / 2
+            if string(el, for: NSRange(location: 0, length: mid)) != nil { lo = mid } else { hi = mid }
+        }
+        return string(el, for: NSRange(location: 0, length: lo))
+    }
+
     /// Screen rect of a text range, in AX coordinates (origin top-left of the main screen).
     static func bounds(_ el: AXUIElement, _ r: NSRange) -> CGRect? {
         var cf = CFRange(location: r.location, length: r.length)
