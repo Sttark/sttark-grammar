@@ -217,7 +217,7 @@ final class Controller: NSObject, NSMenuDelegate {
         let v = str as NSString
         if element == nil || !CFEqual(element!, el) {
             element = el
-            skipsBreaks = nil
+            boxMapFor = nil
             runsNeeded = false
             runsFor = nil
             appName = app?.localizedName ?? ""
@@ -260,54 +260,58 @@ final class Controller: NSObject, NSMenuDelegate {
 
     // MARK: text bookkeeping
 
-    /// Chrome-based apps (the Claude app, Slack) put a line break between lines when they hand over their text,
-    /// but don't count those breaks in cursor and selection positions. Unmeasured is nil.
-    var skipsBreaks: Bool?
+    /// Chrome-based apps (the Claude app, Slack) hand over their text with a line break between lines, but their
+    /// cursor positions skip the break between list items and count a blank line as one. Rather than guess the
+    /// rules, the app reads the box's own text and lines it up with ours. boxMap[i] is the box's position for our i.
+    var boxMap: [Int]?
+    var boxMapFor: NSString?
 
-    /// Measures it by asking the box for a bit of text after a line break, which doesn't move the cursor.
-    /// nil means neither count matched, so positions can't be trusted.
-    func breakMode(_ el: AXUIElement) -> Bool? {
-        if let m = skipsBreaks { return m }
-        let nl = value.range(of: "\n[^\n]", options: [.regularExpression, .backwards])
-        guard nl.location != NSNotFound else { return false }   // one line: both counts agree
-        var len = 1
-        while len < 8, nl.location + 1 + len < value.length, value.character(at: nl.location + 1 + len) != 10 { len += 1 }
-        let sample = NSRange(location: nl.location + 1, length: len)
-        let want = value.substring(with: sample)
-        if AX.string(el, for: sample) == want { skipsBreaks = false }
-        else if AX.string(el, for: Self.toBox(sample, in: value)) == want { skipsBreaks = true }
-        else { log("can't line up positions in \(appName)") }
-        return skipsBreaks
+    func boxMap(_ el: AXUIElement) -> [Int]? {
+        if boxMapFor === value, let m = boxMap { return m }
+        boxMapFor = value
+        boxMap = Self.align(value, AX.boxText(el, upTo: value.length))
+        if boxMap == nil { log("can't line up positions in \(appName)") }
+        return boxMap
     }
 
-    /// Our position to the box's, when it doesn't count line breaks.
-    static func toBox(_ r: NSRange, in v: NSString) -> NSRange {
-        func breaks(_ a: Int, _ b: Int) -> Int { (a..<b).reduce(0) { $0 + (v.character(at: $1) == 10 ? 1 : 0) } }
-        let before = breaks(0, r.location)
-        return NSRange(location: r.location - before, length: r.length - breaks(r.location, r.upperBound))
+    /// Walks both copies, letting either skip a line break the other has. nil if they differ in anything else.
+    /// A box that can't hand over its text is taken to count like ours.
+    static func align(_ v: NSString, _ box: String?) -> [Int]? {
+        guard let box else { return Array(0...v.length) }
+        let b = box as NSString
+        if b.isEqual(to: v as String) { return Array(0...v.length) }
+        var map = [Int](repeating: 0, count: v.length + 1)
+        var i = 0, j = 0
+        while i < v.length {
+            map[i] = j
+            if j < b.length && v.character(at: i) == b.character(at: j) { i += 1; j += 1 }
+            else if v.character(at: i) == 10 { i += 1 }
+            else if j < b.length && b.character(at: j) == 10 { j += 1 }
+            else { return nil }
+        }
+        map[v.length] = b.length
+        return map
+    }
+
+    static func toBox(_ r: NSRange, _ map: [Int]) -> NSRange {
+        NSRange(location: map[r.location], length: map[r.upperBound] - map[r.location])
     }
 
     /// The box's position to ours. A cursor at the start of a line lands after the break.
-    static func fromBox(_ r: NSRange, in v: NSString) -> NSRange {
-        func walk(from start: Int, count: Int) -> Int {
-            var i = start, c = 0
-            while i < v.length && (c < count || v.character(at: i) == 10) { if v.character(at: i) != 10 { c += 1 }; i += 1 }
-            return i
-        }
-        let loc = walk(from: 0, count: r.location)
-        var end = loc, c = 0
-        while end < v.length && c < r.length { if v.character(at: end) != 10 { c += 1 }; end += 1 }
-        return NSRange(location: loc, length: end - loc)
+    static func fromBox(_ r: NSRange, _ map: [Int]) -> NSRange {
+        func ours(_ p: Int) -> Int { map.lastIndex(of: p) ?? map.firstIndex { $0 > p } ?? map.count - 1 }
+        let loc = ours(r.location)
+        return NSRange(location: loc, length: r.length == 0 ? 0 : max(0, ours(r.upperBound) - loc))
     }
 
     func selection(_ el: AXUIElement) -> NSRange? {
         guard let r = AX.selectedRange(el) else { return nil }
-        return breakMode(el) == true ? Self.fromBox(r, in: value) : r
+        return boxMap(el).map { Self.fromBox(r, $0) } ?? r
     }
 
     @discardableResult
     func select(_ el: AXUIElement, _ r: NSRange) -> Bool {
-        AX.setSelectedRange(el, breakMode(el) == true ? Self.toBox(r, in: value) : r)
+        AX.setSelectedRange(el, boxMap(el).map { Self.toBox(r, $0) } ?? r)
     }
 
     func paragraphs(_ s: NSString) -> [(NSRange, String)] {
@@ -624,9 +628,9 @@ final class Controller: NSObject, NSMenuDelegate {
               i.range.upperBound <= cur.length, cur.substring(with: i.range) == i.original else { done(false); return }
         let expected = cur.replacingCharacters(in: i.range, with: i.suggestion)
         // never type over text that isn't the flagged word
-        guard let skips = breakMode(el) else { done(false); return }
+        guard let map = boxMap(el) else { done(false); return }
         // ask the box what sits at that spot; reading the selection back right away comes back empty in Chrome
-        if let at = AX.string(el, for: skips ? Self.toBox(i.range, in: cur) : i.range), at != i.original {
+        if let at = AX.string(el, for: Self.toBox(i.range, map)), at != i.original {
             log("found '\(at)' instead of '\(i.original)' in \(appName); skipping")
             done(false); return
         }
