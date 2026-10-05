@@ -624,19 +624,20 @@ final class Controller: NSObject, NSMenuDelegate {
               i.range.upperBound <= cur.length, cur.substring(with: i.range) == i.original else { done(false); return }
         let expected = cur.replacingCharacters(in: i.range, with: i.suggestion)
         // never type over text that isn't the flagged word
-        guard breakMode(el) != nil else { done(false); return }
-        select(el, i.range)
-        if let got = AX.selectedText(el), got != i.original {
-            log("selected '\(got)' instead of '\(i.original)' in \(appName); skipping")
+        guard let skips = breakMode(el) else { done(false); return }
+        // ask the box what sits at that spot; reading the selection back right away comes back empty in Chrome
+        if let at = AX.string(el, for: skips ? Self.toBox(i.range, in: cur) : i.range), at != i.original {
+            log("found '\(at)' instead of '\(i.original)' in \(appName); skipping")
             done(false); return
         }
+        select(el, i.range)
         let ok = AX.setSelectedText(el, i.suggestion)
         DispatchQueue.main.asyncAfter(deadline: .now() + (ok ? 0.03 : 0)) {
             let now = AX.string(el, kAXValueAttribute) ?? ""
             if now == expected { done(true); return }
             guard now == cur as String else { done(false); return }
             self.select(el, i.range)
-            guard self.selection(el) == i.range, AX.selectedText(el).map({ $0 == i.original }) ?? true else {
+            guard self.selection(el) == i.range else {
                 log("could not select '\(i.original)' in \(self.appName); not pasting")
                 done(false); return
             }
