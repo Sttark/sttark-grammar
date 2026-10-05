@@ -217,6 +217,7 @@ final class Controller: NSObject, NSMenuDelegate {
         let v = str as NSString
         if element == nil || !CFEqual(element!, el) {
             element = el
+            skipsBreaks = nil
             runsNeeded = false
             runsFor = nil
             appName = app?.localizedName ?? ""
@@ -259,6 +260,56 @@ final class Controller: NSObject, NSMenuDelegate {
 
     // MARK: text bookkeeping
 
+    /// Chrome-based apps (the Claude app, Slack) put a line break between lines when they hand over their text,
+    /// but don't count those breaks in cursor and selection positions. Unmeasured is nil.
+    var skipsBreaks: Bool?
+
+    /// Measures it by asking the box for a bit of text after a line break, which doesn't move the cursor.
+    /// nil means neither count matched, so positions can't be trusted.
+    func breakMode(_ el: AXUIElement) -> Bool? {
+        if let m = skipsBreaks { return m }
+        let nl = value.range(of: "\n[^\n]", options: [.regularExpression, .backwards])
+        guard nl.location != NSNotFound else { return false }   // one line: both counts agree
+        var len = 1
+        while len < 8, nl.location + 1 + len < value.length, value.character(at: nl.location + 1 + len) != 10 { len += 1 }
+        let sample = NSRange(location: nl.location + 1, length: len)
+        let want = value.substring(with: sample)
+        if AX.string(el, for: sample) == want { skipsBreaks = false }
+        else if AX.string(el, for: Self.toBox(sample, in: value)) == want { skipsBreaks = true }
+        else { log("can't line up positions in \(appName)") }
+        return skipsBreaks
+    }
+
+    /// Our position to the box's, when it doesn't count line breaks.
+    static func toBox(_ r: NSRange, in v: NSString) -> NSRange {
+        func breaks(_ a: Int, _ b: Int) -> Int { (a..<b).reduce(0) { $0 + (v.character(at: $1) == 10 ? 1 : 0) } }
+        let before = breaks(0, r.location)
+        return NSRange(location: r.location - before, length: r.length - breaks(r.location, r.upperBound))
+    }
+
+    /// The box's position to ours. A cursor at the start of a line lands after the break.
+    static func fromBox(_ r: NSRange, in v: NSString) -> NSRange {
+        func walk(from start: Int, count: Int) -> Int {
+            var i = start, c = 0
+            while i < v.length && (c < count || v.character(at: i) == 10) { if v.character(at: i) != 10 { c += 1 }; i += 1 }
+            return i
+        }
+        let loc = walk(from: 0, count: r.location)
+        var end = loc, c = 0
+        while end < v.length && c < r.length { if v.character(at: end) != 10 { c += 1 }; end += 1 }
+        return NSRange(location: loc, length: end - loc)
+    }
+
+    func selection(_ el: AXUIElement) -> NSRange? {
+        guard let r = AX.selectedRange(el) else { return nil }
+        return breakMode(el) == true ? Self.fromBox(r, in: value) : r
+    }
+
+    @discardableResult
+    func select(_ el: AXUIElement, _ r: NSRange) -> Bool {
+        AX.setSelectedRange(el, breakMode(el) == true ? Self.toBox(r, in: value) : r)
+    }
+
     func paragraphs(_ s: NSString) -> [(NSRange, String)] {
         var out: [(NSRange, String)] = []
         s.enumerateSubstrings(in: NSRange(location: 0, length: s.length), options: [.byParagraphs]) { sub, r, _, _ in
@@ -300,7 +351,7 @@ final class Controller: NSObject, NSMenuDelegate {
 
     func sendChecks(_ el: AXUIElement) {
         guard inflight.count < 2 else { return }
-        let caret = AX.selectedRange(el)?.location ?? 0
+        let caret = selection(el)?.location ?? 0
         let paras = paragraphs(value).sorted { abs($0.0.location - caret) < abs($1.0.location - caret) }
         for (_, text) in paras {
             guard inflight.count < 2 else { break }
@@ -523,7 +574,7 @@ final class Controller: NSObject, NSMenuDelegate {
 
     func fixParagraph() {
         guard let el = element else { return }
-        let caret = AX.selectedRange(el)?.location ?? 0
+        let caret = selection(el)?.location ?? 0
         guard let (r, _) = paragraphs(value).first(where: { caret >= $0.0.location && caret <= $0.0.upperBound }) else { return }
         replace(issues.filter { $0.range.location >= r.location && $0.range.location < r.upperBound })
     }
@@ -534,7 +585,7 @@ final class Controller: NSObject, NSMenuDelegate {
         guard let el = element, !list.isEmpty, !editing else { return }
         editing = true
         let before = value
-        let caret = AX.selectedRange(el)
+        let caret = selection(el)
         var todo = list.sorted { $0.range.location > $1.range.location }
 
         func finish() {
@@ -552,7 +603,7 @@ final class Controller: NSObject, NSMenuDelegate {
             if let c = caret {
                 let delta = after.length - before.length
                 let loc = c.location >= (list.map(\.range.upperBound).max() ?? 0) ? c.location + delta : min(c.location, after.length)
-                AX.setSelectedRange(el, NSRange(location: max(0, loc), length: 0))
+                select(el, NSRange(location: max(0, loc), length: 0))
             }
             lastChange = Date()
             editing = false
@@ -572,14 +623,20 @@ final class Controller: NSObject, NSMenuDelegate {
         guard let cur = AX.string(el, kAXValueAttribute) as NSString?,
               i.range.upperBound <= cur.length, cur.substring(with: i.range) == i.original else { done(false); return }
         let expected = cur.replacingCharacters(in: i.range, with: i.suggestion)
-        AX.setSelectedRange(el, i.range)
+        // never type over text that isn't the flagged word
+        guard breakMode(el) != nil else { done(false); return }
+        select(el, i.range)
+        if let got = AX.selectedText(el), got != i.original {
+            log("selected '\(got)' instead of '\(i.original)' in \(appName); skipping")
+            done(false); return
+        }
         let ok = AX.setSelectedText(el, i.suggestion)
         DispatchQueue.main.asyncAfter(deadline: .now() + (ok ? 0.03 : 0)) {
             let now = AX.string(el, kAXValueAttribute) ?? ""
             if now == expected { done(true); return }
             guard now == cur as String else { done(false); return }
-            AX.setSelectedRange(el, i.range)
-            guard AX.selectedRange(el) == i.range else {
+            self.select(el, i.range)
+            guard self.selection(el) == i.range, AX.selectedText(el).map({ $0 == i.original }) ?? true else {
                 log("could not select '\(i.original)' in \(self.appName); not pasting")
                 done(false); return
             }
