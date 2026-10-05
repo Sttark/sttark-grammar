@@ -328,32 +328,6 @@ final class Controller: NSObject, NSMenuDelegate {
         }
     }
 
-    /// Typos Claude can't guess a fix for (like "somnerhqw") come back unchanged, so the Mac spell checker
-    /// also looks at every word Claude left alone. Capitalized words mid-sentence are skipped as likely names.
-    func spellIssues(_ text: String, besides claude: [Issue]) -> [Issue] {
-        let sc = NSSpellChecker.shared
-        let ns = text as NSString
-        let links = Diff.links(in: text)
-        var out: [Issue] = []
-        var start = 0
-        while start < ns.length {
-            let r = sc.checkSpelling(of: text, startingAt: start, language: nil, wrap: false, inSpellDocumentWithTag: 0, wordCount: nil)
-            guard r.location != NSNotFound, r.length > 0, r.location >= start else { break }
-            start = r.upperBound
-            let word = ns.substring(with: r)
-            if claude.contains(where: { NSIntersectionRange($0.range, r).length > 0 }) { continue }
-            if links.contains(where: { NSIntersectionRange($0, r).length > 0 }) { continue }
-            if word.contains(where: \.isNumber) { continue }
-            if r.location > 0, word.first?.isUppercase == true { continue }
-            if let guess = sc.guesses(forWordRange: r, in: text, language: nil, inSpellDocumentWithTag: 0)?.first {
-                out.append(Issue(range: r, original: word, suggestion: guess, kind: .spelling, reason: "Not a word. Closest match: \(guess)."))
-            } else {
-                out.append(Issue(range: r, original: word, suggestion: word, kind: .spelling, reason: "Not a word, and nothing close to it."))
-            }
-        }
-        return out
-    }
-
     func received(_ text: String, _ claude: CheckResult, model: Model) {
         var caps = Diff.capitalIssues(text, besides: claude.issues)
         var ends = Diff.endIssues(text, besides: claude.issues)
@@ -364,7 +338,7 @@ final class Controller: NSObject, NSMenuDelegate {
             ends = []
         }
         let mine = caps + ends
-        let res = CheckResult(issues: (claude.issues + mine + spellIssues(text, besides: claude.issues + mine)).sorted { $0.range.location < $1.range.location },
+        let res = CheckResult(issues: (claude.issues + mine).sorted { $0.range.location < $1.range.location },
                               inputTokens: claude.inputTokens, outputTokens: claude.outputTokens)
         inflight.remove(text)
         lastError = nil

@@ -112,7 +112,7 @@ This removes the app, the login item, your saved keys, settings, and dictionary.
 ## How it works
 
 1. Every 0.12 s the app reads the focused text box through the macOS Accessibility API.
-2. When you stop typing for 1.2 s, each changed paragraph of 3+ words goes to Claude. Claude sends back a corrected copy plus a short reason for each change. The Mac's built-in spell checker also checks every word Claude left alone. That catches made-up typos like "somnerhqw" that Claude has no fix for. Capitalized words mid-sentence are skipped as likely names.
+2. When you stop typing for 1.2 s, each changed paragraph of 3+ words goes to Claude. Claude sends back a corrected copy plus a short reason for each change. Claude also lists made-up words it has no fix for, like "somnerhqw". The app checks sentence-start capitals and end punctuation itself, since Claude sometimes misses those.
 3. The app compares your text with the corrected copy word by word to get exact positions. A transparent overlay draws the underlines. Chrome-based apps (the Claude app, Slack, web pages) return an empty box when asked where a range of their text sits on screen. For those, the app asks each run of text inside the box instead.
 4. Fixes go in through the Accessibility API. Apps that ignore it get the fix pasted over a selection, and the clipboard is restored afterward. If the app won't let the word be selected, the fix is skipped instead of pasted.
 
