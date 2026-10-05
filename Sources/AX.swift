@@ -57,8 +57,6 @@ enum AX {
         return v as? String
     }
 
-    static func selectedText(_ el: AXUIElement) -> String? { string(el, kAXSelectedTextAttribute) }
-
     /// Screen rect of a text range, in AX coordinates (origin top-left of the main screen).
     static func bounds(_ el: AXUIElement, _ r: NSRange) -> CGRect? {
         var cf = CFRange(location: r.location, length: r.length)
