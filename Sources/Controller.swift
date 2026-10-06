@@ -236,6 +236,7 @@ final class Controller: NSObject, NSMenuDelegate {
         } else if v != value {
             shift(old: value, new: v)
             value = v
+            showSaved()
             lastChange = Date()
         }
         if Date().timeIntervalSince(lastChange) > 1.2 { sendChecks(el) }
@@ -305,11 +306,13 @@ final class Controller: NSObject, NSMenuDelegate {
         NSRange(location: map[r.location], length: map[r.upperBound] - map[r.location])
     }
 
-    /// The box's position to ours. A cursor at the start of a line lands after the break.
+    /// The box's position to ours. Where a line break the box doesn't count sits, a start or cursor lands
+    /// after the break and the end of a selection before it, so the selection stays on its own line.
     static func fromBox(_ r: NSRange, _ map: [Int]) -> NSRange {
-        func ours(_ p: Int) -> Int { map.lastIndex(of: p) ?? map.firstIndex { $0 > p } ?? map.count - 1 }
-        let loc = ours(r.location)
-        return NSRange(location: loc, length: r.length == 0 ? 0 : max(0, ours(r.upperBound) - loc))
+        let after = map.lastIndex(of: r.location) ?? map.firstIndex { $0 > r.location } ?? map.count - 1
+        if r.length == 0 { return NSRange(location: after, length: 0) }
+        let end = map.firstIndex(of: r.upperBound) ?? map.firstIndex { $0 > r.upperBound } ?? map.count - 1
+        return NSRange(location: after, length: max(0, end - after))
     }
 
     func selection(_ el: AXUIElement) -> NSRange? {
@@ -336,6 +339,20 @@ final class Controller: NSObject, NSMenuDelegate {
         // a fix that would change a dictionary word, like "docs.sttark.com" -> "docs.stark.com"
         let words = { (s: String) in Set(s.lowercased().split { !($0.isLetter || $0.isNumber || $0 == "'" || $0 == "’") }.map(String.init)) }
         return words(i.original).subtracting(words(i.suggestion)).isDisjoint(with: dictionary)
+    }
+
+    /// A line typed again, typed back after an edit, or left alone by Fix all matches a result already in hand:
+    /// show it. Lines that already show it keep their underlines as they are.
+    func showSaved() {
+        for (r, t) in paragraphs(value) {
+            guard let saved = cache[t] else { continue }
+            let want = saved.filter(allowed).map { $0.shifted(by: r.location) }
+            let have = issues.filter { $0.range.location >= r.location && $0.range.location < r.upperBound }
+            if have.map(\.range) == want.map(\.range) && have.map(\.suggestion) == want.map(\.suggestion) { continue }
+            issues.removeAll { $0.range.location >= r.location && $0.range.location < r.upperBound }
+            issues += want
+        }
+        issues.sort { $0.range.location < $1.range.location }
     }
 
     func issuesFromCache(_ s: NSString) -> [Issue] {
@@ -599,11 +616,13 @@ final class Controller: NSObject, NSMenuDelegate {
         let before = value
         let caret = selection(el)
         var todo = list.sorted { $0.range.location > $1.range.location }
+        var failed = Set<UUID>()
 
         func finish() {
             let after = (AX.string(el, kAXValueAttribute) ?? before as String) as NSString
             shift(old: before, new: after)
-            let removed = Set(list.map(\.id))
+            // a fix that didn't go in keeps its underline
+            let removed = Set(list.map(\.id)).subtracting(failed)
             issues.removeAll { removed.contains($0.id) }
             value = after
             // remember what is left so the edited paragraph is not sent again
@@ -612,6 +631,8 @@ final class Controller: NSObject, NSMenuDelegate {
                 cache[t] = issues.filter { $0.range.location >= r.location && $0.range.location < r.upperBound }
                     .map { $0.shifted(by: -r.location) }
             }
+            // lines Fix all didn't change, like one whose fix didn't go in, keep their underlines
+            showSaved()
             if let c = caret {
                 let delta = after.length - before.length
                 let loc = c.location >= (list.map(\.range.upperBound).max() ?? 0) ? c.location + delta : min(c.location, after.length)
@@ -625,7 +646,10 @@ final class Controller: NSObject, NSMenuDelegate {
         func next() {
             guard let i = todo.first else { finish(); return }
             todo.removeFirst()
-            replaceOne(el, i) { _ in next() }
+            replaceOne(el, i) { ok in
+                if !ok { failed.insert(i.id); log("fix '\(i.original)' -> '\(i.suggestion)' didn't go in") }
+                next()
+            }
         }
         next()
     }
@@ -649,14 +673,49 @@ final class Controller: NSObject, NSMenuDelegate {
             if now == expected { done(true); return }
             guard now == cur as String else { done(false); return }
             self.select(el, i.range)
-            guard self.selection(el) == i.range else {
-                log("could not select '\(i.original)' in \(self.appName); not pasting")
-                done(false); return
-            }
-            self.paste(i.suggestion) {
-                done((AX.string(el, kAXValueAttribute) ?? "") == expected)
+            // Chrome takes a moment to report a new selection, and a moment more to show a paste
+            let stretched = { (r: NSRange?) in r.map { $0.location == i.range.location && $0.length > i.range.length } ?? false }
+            Self.wait(until: { self.selection(el) == i.range || stretched(self.selection(el)) }) { _ in
+                if self.selection(el) == i.range { return pasteFix() }
+                // A word at the end of a list line: Chrome stretches the selection into the next line.
+                // Select all but its last letter, then take one more with Shift-Right, which stays on the line.
+                guard stretched(self.selection(el)), i.range.length > 0 else {
+                    log("could not select '\(i.original)' in \(self.appName); not pasting")
+                    return done(false)
+                }
+                self.select(el, NSRange(location: i.range.location, length: i.range.length - 1))
+                Self.wait(until: { self.selection(el)?.length == i.range.length - 1 }) { _ in
+                    Self.key(124, .maskShift)
+                    Self.wait(until: { self.selection(el) == i.range }) { ok in
+                        if ok { return pasteFix() }
+                        log("could not select '\(i.original)' in \(self.appName) at a line end; not pasting")
+                        done(false)
+                    }
+                }
             }
         }
+
+        func pasteFix() {
+            paste(i.suggestion) {
+                Self.wait(until: { AX.string(el, kAXValueAttribute) == expected as String }) { done($0) }
+            }
+        }
+    }
+
+    static func key(_ code: CGKeyCode, _ flags: CGEventFlags) {
+        let src = CGEventSource(stateID: .combinedSessionState)
+        for down in [true, false] {
+            let e = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: down)
+            e?.flags = flags
+            e?.post(tap: .cghidEventTap)
+        }
+    }
+
+    /// Checks every 30 ms for up to half a second.
+    static func wait(until ok: @escaping () -> Bool, tries: Int = 16, then: @escaping (Bool) -> Void) {
+        if ok() { then(true); return }
+        guard tries > 0 else { then(false); return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { wait(until: ok, tries: tries - 1, then: then) }
     }
 
     func paste(_ s: String, then: @escaping () -> Void) {
