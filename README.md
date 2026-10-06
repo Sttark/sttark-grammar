@@ -29,7 +29,7 @@ The app is also attached to each [release](https://github.com/Sttark/claude-gram
 
 ## Using it
 
-- Type anywhere. About 3 seconds after you pause, mistakes get underlined.
+- Type anywhere. About 4 to 5 seconds after you pause, mistakes get underlined.
 - Hover an underline to see the fix. Click the blue fix, or press **Tab**, to take it. **Esc** ignores it.
 - **Add to dictionary** stops a word from being flagged. Use it for names and jargon.
 - Web addresses, email addresses and file paths are never flagged.
@@ -112,9 +112,9 @@ This removes the app, the login item, your saved keys, settings, and dictionary.
 ## How it works
 
 1. Every 0.12 s the app reads the focused text box through the macOS Accessibility API.
-2. When you stop typing for 1.2 s, each changed paragraph of 3+ words goes to Claude. Claude sends back a corrected copy plus a short reason for each change. Claude also lists made-up words it has no fix for, like "somnerhqw". The app checks sentence-start capitals and end punctuation itself, since Claude sometimes misses those.
+2. When you stop typing for 2 s, each changed paragraph of 3+ words goes to Claude, all at once. Claude sends back a corrected copy plus a short reason for each change. Claude also lists made-up words it has no fix for, like "somnerhqw". The app checks sentence-start capitals and end punctuation itself, since Claude sometimes misses those.
 3. The app compares your text with the corrected copy word by word to get exact positions. A transparent overlay draws the underlines. Chrome-based apps (the Claude app, Slack, web pages) return an empty box when asked where a range of their text sits on screen. For those, the app asks each run of text inside the box instead.
-4. Fixes go in through the Accessibility API. Apps that ignore it get the fix pasted over a selection, and the clipboard is restored afterward. If the app won't let the word be selected, the fix is skipped instead of pasted. Chrome-based apps count lines differently in their cursor positions than in the text they hand over (list items, blank lines), so the app reads the box's own text, lines the two up, and checks the flagged word is at that spot before replacing it.
+4. Fixes go in through the Accessibility API. Fix all makes one change per line. Apps that ignore it get the fix pasted over a selection, and the clipboard is restored afterward. If the app won't let the word be selected, the fix is skipped instead of pasted. Chrome-based apps count lines differently in their cursor positions than in the text they hand over (list items, blank lines), so the app reads the box's own text, lines the two up, and checks the flagged word is at that spot before replacing it.
 
 On a test paragraph with 12 mistakes, Haiku 4.5 caught 11 or 12 in about 3 s. Sonnet 5 (in the menu) took about 4.5 s, cost twice as much, and caught 8 to 11.
 

@@ -2,7 +2,10 @@ import AppKit
 import SwiftUI
 
 let debug = ProcessInfo.processInfo.environment["CG_DEBUG"] != nil
-func log(_ s: @autoclosure () -> String) { if debug { FileHandle.standardError.write((s() + "\n").data(using: .utf8)!) } }
+let started = Date()
+func log(_ s: @autoclosure () -> String) {
+    if debug { FileHandle.standardError.write((String(format: "%7.3f ", Date().timeIntervalSince(started)) + s() + "\n").data(using: .utf8)!) }
+}
 
 final class Controller: NSObject, NSMenuDelegate {
     let defaults = UserDefaults.standard
@@ -239,7 +242,7 @@ final class Controller: NSObject, NSMenuDelegate {
             showSaved()
             lastChange = Date()
         }
-        if Date().timeIntervalSince(lastChange) > 1.2 { sendChecks(el) }
+        if Date().timeIntervalSince(lastChange) > 2 { sendChecks(el) }
         layout(el)
         hover()
         updateStatus()
@@ -379,11 +382,11 @@ final class Controller: NSObject, NSMenuDelegate {
     }
 
     func sendChecks(_ el: AXUIElement) {
-        guard inflight.count < 2 else { return }
+        guard inflight.count < 8 else { return }
         let caret = selection(el)?.location ?? 0
         let paras = paragraphs(value).sorted { abs($0.0.location - caret) < abs($1.0.location - caret) }
         for (_, text) in paras {
-            guard inflight.count < 2 else { break }
+            guard inflight.count < 8 else { break }
             let words = text.split(whereSeparator: { $0.isWhitespace }).count
             guard cache[text] == nil, !inflight.contains(text), words >= 3, text.utf16.count <= 4000 else { continue }
             if let f = failedAt[text], Date().timeIntervalSince(f) < 30 { continue }
@@ -452,6 +455,7 @@ final class Controller: NSObject, NSMenuDelegate {
                 log("no rect for '\(i.original)' \(i.range): err=\(err.rawValue) value=\(v.map { "\($0)" } ?? "nil") lineRects=\(raw) frame=\(axFrame)")
             }
         }
+        if debug && rects.count != drawnCount { drawnCount = rects.count; log("drawn \(rects.count) underlines") }
         if rects.isEmpty {
             overlay.orderOut(nil)
         } else {
@@ -465,6 +469,7 @@ final class Controller: NSObject, NSMenuDelegate {
         placeBadge(frame)
     }
 
+    var drawnCount = 0
     var runs: [(NSRange, AXUIElement)] = []
     var runsFor: NSString?
     var runsNeeded = false
@@ -597,6 +602,7 @@ final class Controller: NSObject, NSMenuDelegate {
     }
 
     func fixAll() {
+        log("fix all: \(issues.filter(\.hasFix).count) fixes")
         hideCard()
         replace(issues)
     }
@@ -615,7 +621,7 @@ final class Controller: NSObject, NSMenuDelegate {
         editing = true
         let before = value
         let caret = selection(el)
-        var todo = list.sorted { $0.range.location > $1.range.location }
+        var todo = Self.perLine(list, in: before)
         var failed = Set<UUID>()
 
         func finish() {
@@ -640,18 +646,42 @@ final class Controller: NSObject, NSMenuDelegate {
             }
             lastChange = Date()
             editing = false
+            log("fixes done")
             updateStatus()
         }
 
         func next() {
-            guard let i = todo.first else { finish(); return }
+            guard let (i, ids) = todo.first else { finish(); return }
             todo.removeFirst()
             replaceOne(el, i) { ok in
-                if !ok { failed.insert(i.id); log("fix '\(i.original)' -> '\(i.suggestion)' didn't go in") }
+                if !ok { failed.formUnion(ids); log("fix '\(i.original)' -> '\(i.suggestion)' didn't go in") }
                 next()
             }
         }
         next()
+    }
+
+    /// Fixes on the same line become one fix from the first to the last, so each line takes one paste.
+    /// Lines run last to first so earlier positions stay valid. Each comes with the fixes it stands for.
+    static func perLine(_ list: [Issue], in v: NSString) -> [(Issue, [UUID])] {
+        var groups: [NSRange: [Issue]] = [:]
+        for i in list {
+            let line = v.lineRange(for: NSRange(location: i.range.location, length: 0))
+            groups[line, default: []].append(i)
+        }
+        return groups.values.map { g -> (Issue, [UUID]) in
+            let g = g.sorted { $0.range.location < $1.range.location }
+            guard g.count > 1, zip(g, g.dropFirst()).allSatisfy({ $0.range.upperBound <= $1.range.location }) else {
+                return (g[0], g.map(\.id))
+            }
+            let span = NSRange(location: g[0].range.location, length: g.last!.range.upperBound - g[0].range.location)
+            var fixed = "", at = span.location
+            for i in g {
+                fixed += v.substring(with: NSRange(location: at, length: i.range.location - at)) + i.suggestion
+                at = i.range.upperBound
+            }
+            return (Issue(range: span, original: v.substring(with: span), suggestion: fixed, kind: g[0].kind, reason: ""), g.map(\.id))
+        }.sorted { $0.0.range.location > $1.0.range.location }
     }
 
     /// Try the Accessibility API first; apps that ignore it get the fix pasted over a selection.
@@ -711,11 +741,11 @@ final class Controller: NSObject, NSMenuDelegate {
         }
     }
 
-    /// Checks every 30 ms for up to half a second.
-    static func wait(until ok: @escaping () -> Bool, tries: Int = 16, then: @escaping (Bool) -> Void) {
+    /// Checks every 15 ms for up to half a second.
+    static func wait(until ok: @escaping () -> Bool, tries: Int = 33, then: @escaping (Bool) -> Void) {
         if ok() { then(true); return }
         guard tries > 0 else { then(false); return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { wait(until: ok, tries: tries - 1, then: then) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.015) { wait(until: ok, tries: tries - 1, then: then) }
     }
 
     func paste(_ s: String, then: @escaping () -> Void) {
@@ -733,7 +763,9 @@ final class Controller: NSObject, NSMenuDelegate {
             e?.flags = .maskCommand
             e?.post(tap: .cghidEventTap)
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+        // put the clipboard back once the paste has landed (the box changed), or after half a second
+        let before = element.flatMap { AX.string($0, kAXValueAttribute) }
+        Self.wait(until: { self.element.flatMap { AX.string($0, kAXValueAttribute) } != before }) { _ in
             pb.clearContents()
             if !saved.isEmpty { pb.writeObjects(saved) }
             then()
