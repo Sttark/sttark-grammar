@@ -344,11 +344,19 @@ enum Diff {
                as_ == 0 || ae == n || (as_ < ae && bs < be) { continue }
             // A change with no word in it (a hyphen, a comma) is shown on the words around it:
             // an added comma on the word before it, a changed space on the words either side.
+            // Punctuation between them, like the period in "once.)", is taken along.
             if !a[as_..<ae].contains(where: { $0.isWord }) {
                 let inserted = as_ == ae
-                let left = as_ > 0 && a[as_ - 1].isWord
-                if left { as_ -= 1; bs -= 1 }
-                if (!inserted || !left) && ae < n && a[ae].isWord { ae += 1; be += 1 }
+                let punct = { (t: Token) in !t.isWord && !t.text.allSatisfy(\.isWhitespace) }
+                var l = as_
+                while l > 0 && punct(a[l - 1]) { l -= 1 }
+                let left = l > 0 && a[l - 1].isWord
+                if left { bs -= as_ - (l - 1); as_ = l - 1 }
+                if !inserted || !left {
+                    var r = ae
+                    while r < n && punct(a[r]) { r += 1 }
+                    if r < n && a[r].isWord { be += r + 1 - ae; ae = r + 1 }
+                }
             }
             // trim leading and trailing spaces that did not change
             while as_ < ae && bs < be && a[as_].text == b[bs].text && !a[as_].isWord { as_ += 1; bs += 1 }
