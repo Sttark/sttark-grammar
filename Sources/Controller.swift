@@ -206,7 +206,15 @@ final class Controller: NSObject, NSMenuDelegate {
         guard running, AXIsProcessTrusted() else { reset(); updateStatus(); return }
         guard !editing else { return }
 
-        guard let el = AX.focused() else { reset(); updateStatus(); return }
+        guard let el = AX.focused() else {
+            // Electron apps (the Claude app, Slack) show no text box until asked, and forget when they restart.
+            // With nothing focused there's no app to ask, so ask the one in front.
+            if let front = NSWorkspace.shared.frontmostApplication?.processIdentifier, front != getpid(), !axEnabled.contains(front) {
+                AX.enableAppAccessibility(front); axEnabled.insert(front)
+                log("nothing focused; asked \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?") to share its text boxes")
+            }
+            reset(); updateStatus(); return
+        }
         let pid = AX.pid(el)
         if pid == getpid() { return }                   // mouse is on our card; keep state
         let app = NSRunningApplication(processIdentifier: pid)
