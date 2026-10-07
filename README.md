@@ -34,15 +34,16 @@ The app is also attached to each [release](https://github.com/Sttark/claude-gram
 - **Add to dictionary** stops a word from being flagged. Use it for names and jargon.
 - Web addresses, email addresses and file paths are never flagged.
 - A small dot sits in the corner of the text box, away from your text: gray and spinning while it checks, red with the number of mistakes, purple when there's a tidy-up, red with a purple corner when there are both. Hover it for a card with **Fix all** and **Tidy up**, one click each. Click the dot to keep the card open; Esc or a click anywhere else closes it.
-- **Control-Option-F** fixes the paragraph you're in. You can change it (see Shortcuts).
+- **Control-Option-F** fixes everything (Fix all), and **Control-Option-T** tidies up when the dot is purple. You can change both (see Shortcuts).
 
 ### Tidy up
 
 For a longer message, the dot turns purple when Claude has a cleaner version: paragraphs split, blank lines between them, things run together turned into a bulleted or numbered list, and spelling fixed. Hover the dot to see it, and click **Tidy up** to swap your message for it. Command-Z undoes it.
 
 - Claude gets the whole message once you pause, if it's at least 20 words or 3 lines. It keeps your meaning and only rewords what a list needs.
-- Tidying pastes the new text over the whole message, then types "- " or "1. " at the start of each list item (rich boxes like the Claude app turn that into a real list) and adds blank lines one at a time. It never presses Return, which would send the message in the Claude app or Slack.
-- In boxes that keep styles, the one or two details a reader must not miss are made bold. The Claude app's box has no bold.
+- Tidying selects the whole message and pastes the new version over it in one go. The paste carries a formatted copy, which rich boxes like the Claude app, Slack, Asana and Gmail turn into real lists and bold, and a plain copy with "- " lines for plain boxes. Nothing is typed after, and Return is never pressed, since it would send the message in the Claude app or Slack.
+- The one or two details a reader must not miss are made bold, in boxes that keep bold.
+- A box that already puts space between paragraphs gets no empty lines, so they don't look doubled.
 - In rich boxes like Slack and Asana, tidying turns links and @mentions into plain text.
 - Turn it off with **Offer to tidy up** in the menu. It costs about one extra check each time you pause in a long message.
 
@@ -72,7 +73,7 @@ It costs about a cent per paragraph, or about 20 cents for 1,000 words, billed t
 
 ### Shortcuts
 
-Change the read aloud, fix paragraph, and translate shortcuts under **Shortcuts** in the menu. Click one, press the new keys, and click **Save**. A shortcut needs at least one of Command, Control or Option. **No shortcut** turns one off. Translate has no shortcut until you set one.
+Change the read aloud, Fix all, Tidy up and translate shortcuts under **Shortcuts** in the menu. Click one, press the new keys, and click **Save**. A shortcut needs at least one of Command, Control or Option. **No shortcut** turns one off. Translate has no shortcut until you set one.
 
 The menu bar icon (an I-beam cursor) has:
 - On/off

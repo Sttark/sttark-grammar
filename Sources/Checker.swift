@@ -51,8 +51,6 @@ enum Model: String, CaseIterable {
     var price: (Double, Double) { self == .sonnet ? (2, 10) : (1, 5) }
 }
 
-enum Style: String { case bold, underline }
-
 /// Claude's tidied-up copy of a whole message, as lines to put in the box.
 struct Tidy {
     struct Line { var text: String; var marker: String?; var blankBefore: Bool }   // marker: "- " or "1. "
@@ -109,8 +107,40 @@ struct Tidy {
         self.bold = bold
     }
 
-    /// What goes in by one paste: the lines without markers or blank lines, which are added after.
-    var plain: String { lines.map(\.text).joined(separator: "\n") }
+    /// The plain copy, for plain text boxes: list markers typed out and blank lines as empty lines.
+    func plain(blankLines: Bool = true) -> String {
+        var n = 0
+        return lines.map { l in
+            n = l.marker == "1. " ? n + 1 : 0
+            let m = l.marker == "1. " ? "\(n). " : (l.marker ?? "")
+            return (l.blankBefore && blankLines ? "\n" : "") + m + l.text
+        }.joined(separator: "\n")
+    }
+
+    /// The formatted copy, for rich boxes (the Claude app, Slack, Asana, Gmail): paragraphs, real lists, bold,
+    /// and an empty paragraph for each blank line unless the box already spaces its paragraphs.
+    func html(blankLines: Bool = true) -> String {
+        func esc(_ t: String) -> String {
+            var e = t.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
+            for b in bold { e = e.replacingOccurrences(of: esc0(b), with: "<strong>" + esc0(b) + "</strong>") }
+            return e
+        }
+        func esc0(_ t: String) -> String { t.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;") }
+        var out = "", open: String?
+        for l in lines {
+            let tag = l.marker == "1. " ? "ol" : l.marker == "- " ? "ul" : nil
+            if open != tag, let o = open { out += "</\(o)>"; open = nil }
+            if l.blankBefore && blankLines { out += "<p><br></p>" }
+            if let tag {
+                if open == nil { out += "<\(tag)>"; open = tag }
+                out += "<li><p>\(esc(l.text))</p></li>"
+            } else {
+                out += "<p>\(esc(l.text))</p>"
+            }
+        }
+        if let o = open { out += "</\(o)>" }
+        return out
+    }
 
     /// For the card: markers shown as they'll look, numbered within each list.
     var preview: String {

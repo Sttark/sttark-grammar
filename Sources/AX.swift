@@ -82,13 +82,6 @@ enum AX {
         return rect
     }
 
-    /// How many elements with this role are inside, a few levels down.
-    static func count(_ el: AXUIElement, role: String, depth: Int = 4) -> Int {
-        children(el).reduce(0) { n, c in
-            n + (string(c, kAXRoleAttribute) == role ? 1 : 0) + (depth > 0 ? count(c, role: role, depth: depth - 1) : 0)
-        }
-    }
-
     static func children(_ el: AXUIElement) -> [AXUIElement] {
         (attr(el, kAXChildrenAttribute) as? [AXUIElement]) ?? []
     }

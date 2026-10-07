@@ -710,12 +710,6 @@ final class Controller: NSObject, NSMenuDelegate {
         replace(issues)
     }
 
-    func fixParagraph() {
-        guard let el = element else { return }
-        let caret = selection(el)?.location ?? 0
-        guard let (r, _) = paragraphs(value).first(where: { caret >= $0.0.location && caret <= $0.0.upperBound }) else { return }
-        replace(issues.filter { $0.range.location >= r.location && $0.range.location < r.upperBound })
-    }
 
     /// Apply fixes from last to first so earlier positions stay valid.
     func replace(_ all: [Issue], then: (() -> Void)? = nil) {
@@ -818,129 +812,70 @@ final class Controller: NSObject, NSMenuDelegate {
         return false
     }
 
+    /// How tall, in lines, the space is where the first blank line went: from the end of the line above to the
+    /// start of the line below. About 1 in a box that doesn't space paragraphs, about 3 in one that does.
+    func blankLineGap(_ el: AXUIElement, _ t: Tidy) -> CGFloat? {
+        guard let k = t.lines.indices.first(where: { $0 > 0 && t.lines[$0].blankBefore }) else { return nil }
+        let want = t.lines[k].text.split(separator: " ").prefix(4).joined(separator: " ")
+        let at = value.range(of: want, options: .caseInsensitive)
+        guard at.location != NSNotFound, at.location >= 2,
+              let below = bounds(el, NSRange(location: at.location, length: 1)),
+              let above = bounds(el, NSRange(location: at.location - 2, length: 1)), above.height > 0 else { return nil }
+        let gap = (below.minY - above.maxY) / above.height
+        note("tidy: blank line gap \(String(format: "%.1f", gap)) lines")
+        return gap
+    }
+
     /// The first line of the tidied text is in the box now.
     func lineStartLive(_ el: AXUIElement, _ first: String) -> Bool {
         let want = first.split(separator: " ").prefix(4).joined(separator: " ").lowercased()
         return (AX.string(el, kAXValueAttribute) ?? "").lowercased().hasPrefix(want)
     }
 
-    /// Where a line starts, by its first words, after a list marker the box may show in its text.
-    func lineStart(of text: String) -> Int? {
-        let want = text.split(separator: " ").prefix(4).joined(separator: " ").lowercased()
-        guard !want.isEmpty else { return nil }
-        var i = 0
-        while i <= value.length {
-            if i == 0 || value.character(at: i - 1) == 10 {
-                let body = value.substring(from: i).replacingOccurrences(of: #"^([-*•]|\d+[.)])\s+"#, with: "", options: .regularExpression)
-                if body.lowercased().hasPrefix(want) { return i }
-            }
-            let next = value.range(of: "\n", options: [], range: NSRange(location: i, length: value.length - i))
-            if next.location == NSNotFound { return nil }
-            i = next.upperBound
-        }
-        return nil
-    }
-
-    /// Replace swaps the whole message for the tidied lines in one paste, never pressing Return (it sends in
-    /// the Claude app and Slack). Then, the ways that work in every box tested: list markers typed at the start
-    /// of each item, which rich boxes turn into a real list; one pasted break at a line start for each blank
-    /// line; and bold by selecting the phrase and pressing Command-B.
+    /// Tidy up replaces the whole message in one paste: Command-A, then a paste that carries a formatted copy
+    /// (real lists, bold, blank lines) for rich boxes and a plain copy for plain ones. Nothing is typed after,
+    /// and Return is never pressed (it sends in the Claude app and Slack).
     func applyTidy() {
         guard let el = element, let t = tidy, !editing else { return }
         hideCard()
         editing = true
-        note("tidy up in \(appName): \(t.lines.count) lines, \(t.lines.filter { $0.marker != nil }.count) list items, \(t.bold.count) bold")
+        // a box that already spaces its paragraphs (like a web page) gets no empty lines, or they'd look doubled
+        let spaced = paragraphsSpaced(el)
+        note("tidy up in \(appName): \(t.lines.count) lines, \(t.lines.filter { $0.marker != nil }.count) list items, \(t.bold.count) bold, blank lines \(spaced ? "left to the box" : "added")")
         let first = t.lines[0].text
         func finish(_ ok: Bool) {
             refresh(el)
             lastChange = Date()
             editing = false
-            note(ok ? "tidy up done" : "tidy up stopped partway")
+            note(ok ? "tidy up done" : "tidy up didn't go in")
             updateStatus()
         }
-        // 2. list markers, top down, numbered within each list
-        func markers(_ k: Int, _ n: Int) {
-            guard k < t.lines.count else {
-                refresh(el)
-                // a box that spaces its paragraphs and made a real list already sets the list apart; where the
-                // list is typed dashes, every line is spaced alike, so empty lines still group it
-                let hasList = t.lines.contains { $0.marker != nil }
-                if paragraphsSpaced(el) && (!hasList || AX.count(el, role: "AXList", depth: 6) > 0) {
-                    note("tidy: this box already spaces its paragraphs; no empty lines added"); return bolds(0)
-                }
-                return blanks(t.lines.count - 1)
-            }
-            let line = t.lines[k]
-            guard let m = line.marker else { return markers(k + 1, 0) }
-            let number = m == "1. " ? n + 1 : 0
-            let mark = m == "1. " ? "\(number). " : "- "
-            refresh(el)
-            guard let at = lineStart(of: line.text) else { note("tidy: list line \(k + 1) not found"); return markers(k + 1, number) }
-            func attempt(_ tries: Int) {
-                caret(el, at: at) { ok in
-                    guard ok else { note("tidy: no cursor at list line \(k + 1)"); return markers(k + 1, number) }
-                    let look = { "\(AX.string(el, kAXValueAttribute) ?? "")\u{1}\(AX.count(el, role: "AXListMarker", depth: 6))" }
-                    let was = look()
-                    Self.type(mark)
-                    Self.wait(until: { look() != was }) { changed in
-                        // keys that went nowhere changed nothing, so typing again can't double up
-                        if !changed && tries > 0 { return DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { attempt(tries - 1) } }
-                        if !changed { note("tidy: marker didn't go in on line \(k + 1)") }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { markers(k + 1, number) }
-                    }
-                }
-            }
-            attempt(1)
-        }
-        // 3. blank lines, bottom up so the spots above don't move
-        func blanks(_ k: Int) {
-            guard k > 0 else { return bolds(0) }
-            let line = t.lines[k]
-            guard line.blankBefore else { return blanks(k - 1) }
-            refresh(el)
-            let start = line.text.split(separator: " ").prefix(4).joined(separator: " ")
-            if displayText(el).range(of: "\n\n" + start, options: .caseInsensitive) != nil { note("tidy: line \(k + 1) already has a blank line above"); return blanks(k - 1) }
-            guard let at = lineStart(of: line.text), at > 0 else { note("tidy: line \(k + 1) not found for its blank line (\(start))"); return blanks(k - 1) }
-            insert(el, over: NSRange(location: at, length: 0), "\n") { ok in
-                note("tidy: blank line above line \(k + 1) at \(at): \(ok ? "added" : "didn't go in")")
-                blanks(k - 1)
-            }
-        }
-        // 4. bold, where the box keeps styles
-        func bolds(_ k: Int) {
-            guard k < t.bold.count, canStyle(el), !styleRuledOut(.bold) else { return finish(true) }
-            refresh(el)
-            let r = value.range(of: t.bold[k])
-            guard r.location != NSNotFound else { return bolds(k + 1) }
-            let alone = styledAlone(el, t.bold[k])
-            select(el, r, expect: t.bold[k]) { ok in
-                guard ok else { return bolds(k + 1) }
-                Self.key(11, .maskCommand)                              // Command-B
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                    if !(alone || self.styledAlone(el, t.bold[k]) || self.nativeStyled(el, r, .bold)) {
-                        self.noStyle.insert(self.styleKey(.bold))
-                        note("bold doesn't work in \(self.appName); won't try it here again")
-                    }
-                    self.select(el, NSRange(location: r.upperBound, length: 0))
-                    bolds(k + 1)
-                }
-            }
-        }
-        // 1. everything in the box, replaced by one paste
         Self.key(0, .maskCommand)                                       // Command-A
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             let before = AX.string(el, kAXValueAttribute)
-            self.paste(t.plain) {
+            self.paste(t.plain(blankLines: !spaced), html: t.html(blankLines: !spaced)) {
                 // a whole message can take a moment to show up
-                Self.wait(until: { AX.string(el, kAXValueAttribute) != before && self.lineStartLive(el, first) }, tries: 100) { changed in
-                    self.refresh(el)
-                    // a box that turned the paste into something else (like an attachment) gets it undone
-                    guard changed, self.lineStart(of: first) != nil else {
-                        note("tidy paste didn't land as text; undoing")
-                        if changed { Self.key(6, .maskCommand) }        // Command-Z
-                        return finish(false)
+                Self.wait(until: { AX.string(el, kAXValueAttribute) != before && self.lineStartLive(el, first) }, tries: 100) { landed in
+                    if !landed {
+                        // a box that turned the paste into something else (like an attachment) gets it undone
+                        let changed = AX.string(el, kAXValueAttribute) != before
+                        note("tidy paste didn't land as text\(changed ? "; undoing" : "")")
+                        if changed { Self.key(6, .maskCommand) }            // Command-Z
                     }
-                    markers(0, 0)
+                    self.refresh(el)
+                    // A box that started as one paragraph couldn't be measured before. If an empty line now
+                    // takes up more than two lines of space, the box spaces its own paragraphs: paste once more
+                    // without the empty lines so they don't look doubled.
+                    if landed && !spaced, let gap = self.blankLineGap(el, t), gap > 1.8 {
+                        note("tidy: a blank line here is \(String(format: "%.1f", gap)) lines tall; pasting again without them")
+                        Self.key(0, .maskCommand)
+                        return DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                            self.paste(t.plain(blankLines: false), html: t.html(blankLines: false)) {
+                                Self.wait(until: { false }, tries: 10) { _ in finish(true) }
+                            }
+                        }
+                    }
+                    finish(landed)
                 }
             }
         }
@@ -971,72 +906,6 @@ final class Controller: NSObject, NSMenuDelegate {
         value = now
     }
 
-    /// Bold and underline need a box that keeps styles: a rich web box (its text comes in pieces), or a Mac
-    /// text view whose text carries fonts. Never underline in Slack, where Command-U uploads a file.
-    func canStyle(_ el: AXUIElement) -> Bool {
-        if !AX.children(el).isEmpty { return true }
-        var cf = CFRange(location: 0, length: min(1, value.length)); var v: AnyObject?
-        guard let arg = AXValueCreate(.cfRange, &cf),
-              AXUIElementCopyParameterizedAttributeValue(el, kAXAttributedStringForRangeParameterizedAttribute as CFString, arg, &v) == .success,
-              let a = v as? NSAttributedString, a.length > 0,
-              let font = a.attribute(NSAttributedString.Key("AXFont"), at: 0, effectiveRange: nil) as? [String: Any] else { return false }
-        return font["AXFontName"] != nil
-    }
-
-    var noStyle: Set<String> {
-        // Slack: Command-U uploads a file. The Claude app's box has no bold or underline (tested).
-        get { Set(defaults.stringArray(forKey: "noStyle") ?? ["com.tinyspeck.slackmacgap/underline",
-                                                             "com.anthropic.claudefordesktop/bold", "com.anthropic.claudefordesktop/underline"]) }
-        set { defaults.set(Array(newValue), forKey: "noStyle") }
-    }
-    /// Ruled out for this kind of box, or for the whole app.
-    func styleRuledOut(_ c: Style) -> Bool {
-        let app = NSRunningApplication(processIdentifier: element.map(AX.pid) ?? 0)?.bundleIdentifier ?? appName
-        return noStyle.contains(styleKey(c)) || noStyle.contains("\(app)/\(c.rawValue)")
-    }
-
-    /// Per app, and in a browser per kind of box (its page classes), so one site that can't underline doesn't
-    /// turn it off for every site.
-    func styleKey(_ c: Style) -> String {
-        let app = NSRunningApplication(processIdentifier: element.map(AX.pid) ?? 0)?.bundleIdentifier ?? appName
-        let classes = (element.flatMap { AX.attr($0, "AXDOMClassList") } as? [String] ?? [])
-            .filter { !$0.localizedCaseInsensitiveContains("focus") }.sorted().joined(separator: ".")
-        return classes.isEmpty ? "\(app)/\(c.rawValue)" : "\(app)/\(classes)/\(c.rawValue)"
-    }
-
-    /// In a web box: the phrase is a piece of text on its own.
-    func styledAlone(_ el: AXUIElement, _ phrase: String) -> Bool {
-        AX.textRuns(el, value: value).contains { value.substring(with: $0.0) == phrase }
-    }
-
-    /// In a Mac text view: the font at the phrase is bold, or it's underlined.
-    func nativeStyled(_ el: AXUIElement, _ r: NSRange, _ c: Style) -> Bool {
-        guard AX.children(el).isEmpty else { return false }
-        var cf = CFRange(location: r.location, length: r.length); var v: AnyObject?
-        guard let arg = AXValueCreate(.cfRange, &cf),
-              AXUIElementCopyParameterizedAttributeValue(el, kAXAttributedStringForRangeParameterizedAttribute as CFString, arg, &v) == .success,
-              let a = v as? NSAttributedString, a.length > 0 else { return false }
-        let attrs = a.attributes(at: 0, effectiveRange: nil)
-        if c == .underline { return (attrs[NSAttributedString.Key("AXUnderline")] as? Int ?? 0) != 0 }
-        let name = (attrs[NSAttributedString.Key("AXFont")] as? [String: Any])?["AXFontName"] as? String ?? ""
-        return name.localizedCaseInsensitiveContains("bold")
-    }
-
-    /// Selects a range (or puts the cursor at a spot) and pastes text over it, after checking it's the right text.
-    func insert(_ el: AXUIElement, over r: NSRange, _ text: String, done: @escaping (Bool) -> Void) {
-        guard r.location >= 0, r.upperBound <= value.length, let map = boxMap(el) else { return done(false) }
-        if r.length > 0, let at = AX.string(el, for: Self.toBox(r, map)), at != value.substring(with: r) { return done(false) }
-        let go = { (ok: Bool) in
-            guard ok else { note("could not put the cursor at \(r.location) (box reports \(self.selection(el).map { "\($0)" } ?? "nil"))"); return done(false) }
-            // an empty line doesn't show in the text Chrome hands over, only in the box's own text
-            let live = { "\(AX.string(el, kAXValueAttribute) ?? "")\u{1}\(AX.boxText(el, upTo: (AX.string(el, kAXValueAttribute) ?? "").utf16.count) ?? "")" }
-            let before = live()
-            self.paste(text) { Self.wait(until: { live() != before }) { done($0) } }
-        }
-        if r.length > 0 { select(el, r, expect: value.substring(with: r), done: go) }
-        else { caret(el, at: r.location, done: go) }
-    }
-
     /// Selects a range and waits until the box reports exactly that text as selected. Positions alone can't be
     /// trusted at the end of a line: rich boxes like the Claude app may take the line break too, and their
     /// positions don't count it. If the selection runs long, select all but the last letter and take one more
@@ -1064,20 +933,6 @@ final class Controller: NSObject, NSMenuDelegate {
             log("selected \((got ?? "nil").debugDescription) for \(text.debugDescription); trying Shift-Right")
             shiftRight()
         }
-    }
-
-    func caret(_ el: AXUIElement, at loc: Int, done: @escaping (Bool) -> Void) {
-        let r = NSRange(location: loc, length: 0)
-        select(el, r)
-        Self.wait(until: { self.selection(el) == r }, then: done)
-    }
-
-    /// Types text as real key presses, so a box's own shortcuts (like "- " for a list) see it.
-    /// Only what list markers need: digits, ".", "-" and space.
-    static let keyCodes: [Character: CGKeyCode] = ["0": 29, "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "6": 22, "7": 26,
-                                                    "8": 28, "9": 25, ".": 47, "-": 27, " ": 49]
-    static func type(_ s: String) {
-        for ch in s { if let k = keyCodes[ch] { key(k, []) } }
     }
 
     /// Fixes on the same line become one fix from the first to the last, so each line takes one paste.
@@ -1156,7 +1011,7 @@ final class Controller: NSObject, NSMenuDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.015) { wait(until: ok, tries: tries - 1, then: then) }
     }
 
-    func paste(_ s: String, then: @escaping () -> Void) {
+    func paste(_ s: String, html: String? = nil, then: @escaping () -> Void) {
         let pb = NSPasteboard.general
         let saved = pb.pasteboardItems?.compactMap { item -> NSPasteboardItem? in
             let copy = NSPasteboardItem()
@@ -1165,6 +1020,7 @@ final class Controller: NSObject, NSMenuDelegate {
         } ?? []
         pb.clearContents()
         pb.setString(s, forType: .string)
+        if let html { pb.setString("<meta charset=\"utf-8\">" + html, forType: .html) }
         let src = CGEventSource(stateID: .combinedSessionState)
         for down in [true, false] {
             let e = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: down)   // V
@@ -1205,8 +1061,12 @@ final class Controller: NSObject, NSMenuDelegate {
         let code = e.getIntegerValueField(.keyboardEventKeycode)
         let f = e.flags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift])
         if recordingShortcut { return false }
-        if Action.fixParagraph.shortcut?.matches(e) == true && running && element != nil {
-            DispatchQueue.main.async { self.fixParagraph() }
+        if Action.tidyUp.shortcut?.matches(e) == true && running && element != nil && tidy != nil {
+            DispatchQueue.main.async { self.applyTidy() }
+            return true
+        }
+        if Action.fixAll.shortcut?.matches(e) == true && running && element != nil {
+            DispatchQueue.main.async { self.fixAll() }
             return true
         }
         if Action.readAloud.shortcut?.matches(e) == true {
@@ -1303,7 +1163,8 @@ final class Controller: NSObject, NSMenuDelegate {
         speeds.submenu = speedMenu
         menu.addItem(speeds)
         shortcutItem("Translate selection to Chinese", #selector(translateMenu), .translate)
-        shortcutItem("Fix this paragraph", #selector(fixParagraphMenu), .fixParagraph)
+        shortcutItem("Fix all", #selector(fixAllMenu), .fixAll)
+        shortcutItem("Tidy up", #selector(tidyUpMenu), .tidyUp)
         let keys = NSMenuItem(title: "Shortcuts", action: nil, keyEquivalent: "")
         let keysMenu = NSMenu()
         for a in Action.allCases {
@@ -1339,7 +1200,8 @@ final class Controller: NSObject, NSMenuDelegate {
     @objc func toggleOn() { enabled.toggle(); if !enabled { reset() }; updateStatus() }
     @objc func pause() { pausedUntil = Date().addingTimeInterval(3600); reset(); updateStatus() }
     @objc func resume() { pausedUntil = nil; updateStatus() }
-    @objc func fixParagraphMenu() { fixParagraph() }
+    @objc func fixAllMenu() { fixAll() }
+    @objc func tidyUpMenu() { applyTidy() }
     @objc func translateMenu() {
         // the card goes under the menu bar icon; the menu has closed, so the app you were in has focus again
         let anchor = menuAnchor
