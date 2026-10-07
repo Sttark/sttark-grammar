@@ -46,6 +46,8 @@ final class Controller: NSObject, NSMenuDelegate {
     var tidyChecked: Set<String> = []          // messages already sent, with or without a tidy-up
     var tidyInflight: String?
     var tidyDismissed: Set<String> = []
+    var dotCardOpen = false
+    var dotPinned = false                      // opened by a click: stays until a click elsewhere or Esc
     /// The tidy-up for the message as it is right now.
     var tidy: Tidy? { tidyOn && !tidyDismissed.contains(value as String) ? tidyCache[value as String] : nil }
     var axEnabled: Set<pid_t> = []
@@ -95,7 +97,15 @@ final class Controller: NSObject, NSMenuDelegate {
     }()
     var dictionaryURL: URL { Self.supportDir.appendingPathComponent("dictionary.txt") }
 
+    var clickMonitor: Any?
+
     func start() {
+        // a click in another app (anywhere but the dot and its card) closes the dot's card
+        clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            guard let self, self.dotCardOpen else { return }
+            let m = NSEvent.mouseLocation
+            if !self.card.frame.contains(m) && !self.badge.frame.contains(m) { self.hideCard() }
+        }
         if !AXIsProcessTrusted() {
             let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
             AXIsProcessTrustedWithOptions(opts)
@@ -265,6 +275,7 @@ final class Controller: NSObject, NSMenuDelegate {
             shift(old: value, new: v)
             value = v
             showSaved()
+            if dotCardOpen { hideCard() }
             lastChange = Date()
         }
         if Date().timeIntervalSince(lastChange) > 2 { sendChecks(el); sendTidyCheck(el) }
@@ -531,9 +542,7 @@ final class Controller: NSObject, NSMenuDelegate {
         let state = "\(count) \(checking) \(tidyNow)"
         if state != badgeState || badge.contentView == nil {
             badgeState = state
-            badge.contentView = ClickThroughHostingView(rootView: BadgeView(count: count, checking: checking, tidy: tidyNow,
-                                                                               fixAll: { [weak self] in self?.fixAll() },
-                                                                               tidyUp: { [weak self] in self?.applyTidy() }))
+            badge.contentView = ClickThroughHostingView(rootView: DotView(count: count, checking: checking, tidy: tidyNow) { [weak self] in self?.clickDot() })
         }
         let size = badge.contentView!.fittingSize
         let screen = NSScreen.screens.first { $0.frame.intersects(frame) }?.visibleFrame ?? frame
@@ -587,11 +596,13 @@ final class Controller: NSObject, NSMenuDelegate {
         case "esc": if let id = hoverID { ignore(id) }
         case "fixall": fixAll()
         case "tidyreplace": applyTidy()
+        case "dothover": fakeMouse = CGPoint(x: badge.frame.midX, y: badge.frame.midY)
+        case "dotclick": clickDot()
         case "translate": translateMenu()
         case "dump":
             log("value: \(value)")
             for i in issues { log("  \(i.range) \(i.kind) \(i.original) -> \(i.suggestion) rects=\(rects[i.id] ?? [])") }
-            log("card \(card.isVisible ? "\(card.frame)" : "hidden") badge \(badge.isVisible ? "\(badge.frame)" : "hidden") tidy \(tidy.map { "\($0.lines.count) lines" } ?? "none")")
+            log("card \(card.isVisible ? "\(card.frame)" : "hidden") badge \(badge.isVisible ? "\(badge.frame)" : "hidden") tidy \(tidy.map { "\($0.lines.count) lines" } ?? "none") dotcard \(dotCardOpen) pinned \(dotPinned)")
         default: break
         }
     }
@@ -599,15 +610,49 @@ final class Controller: NSObject, NSMenuDelegate {
     func hover() {
         debugCommand()
         let m = fakeMouse ?? NSEvent.mouseLocation
+        // the dot's card stays while the mouse is on the dot or the card, and goes a moment after it leaves
+        if dotCardOpen {
+            if card.frame.insetBy(dx: -6, dy: -6).contains(m) || badge.frame.insetBy(dx: -4, dy: -4).contains(m) { lastInside = Date(); return }
+            if dotPinned || Date().timeIntervalSince(lastInside) < 0.35 { return }
+            hideCard()
+        }
         if card.isVisible && card.frame.insetBy(dx: -4, dy: -4).contains(m) { lastInside = Date(); return }
-        // the badge can sit on top of an underlined word: over the badge, it's the badge, not the word
-        if badge.isVisible && badge.frame.insetBy(dx: -2, dy: -2).contains(m) { if hoverID != nil { hideCard() }; return }
+        // the dot can sit on top of an underlined word: over the dot, it's the dot, not the word
+        if badge.isVisible && badge.frame.insetBy(dx: -2, dy: -2).contains(m) { showDotCard(pinned: false); return }
         if let i = issues.first(where: { rects[$0.id]?.contains { $0.insetBy(dx: -1, dy: -4).contains(m) } ?? false }) {
             lastInside = Date()
             if hoverID != i.id { showCard(i) }
             return
         }
         if hoverID != nil && Date().timeIntervalSince(lastInside) > 0.3 { hideCard() }
+    }
+
+    /// Hovering the dot shows this card; clicking the dot keeps it open.
+    func showDotCard(pinned: Bool) {
+        if dotCardOpen { dotPinned = dotPinned || pinned; return }
+        hideCard()
+        let checking = paragraphs(value).contains { inflight.contains($0.1) } || tidyInflight != nil
+        let rich = element.map { !AX.children($0).isEmpty } ?? false
+        let view = DotCardView(count: issues.filter(\.hasFix).count, checking: checking, tidy: tidy, warn: rich,
+                               fixAll: { [weak self] in self?.hideCard(); self?.fixAll() },
+                               tidyUp: { [weak self] in self?.hideCard(); self?.applyTidy() })
+        let host = ClickThroughHostingView(rootView: view)
+        let size = host.fittingSize
+        let anchor = badge.frame
+        let screen = NSScreen.screens.first { $0.frame.contains(anchor.origin) }?.visibleFrame ?? NSScreen.main!.visibleFrame
+        var origin = CGPoint(x: anchor.maxX - size.width, y: anchor.maxY + 4)
+        if origin.y + size.height > screen.maxY { origin.y = anchor.minY - 4 - size.height }
+        origin.x = min(max(origin.x, screen.minX + 6), screen.maxX - size.width - 6)
+        card.contentView = host
+        card.setFrame(CGRect(origin: origin, size: size), display: true)
+        card.orderFrontRegardless()
+        dotCardOpen = true
+        dotPinned = pinned
+        lastInside = Date()
+    }
+
+    func clickDot() {
+        if dotCardOpen && dotPinned { hideCard() } else { dotCardOpen = false; showDotCard(pinned: true) }
     }
 
     func showCard(_ i: Issue) {
@@ -631,6 +676,8 @@ final class Controller: NSObject, NSMenuDelegate {
 
     func hideCard() {
         hoverID = nil
+        dotCardOpen = false
+        dotPinned = false
         card.orderOut(nil)
     }
 
@@ -1171,6 +1218,7 @@ final class Controller: NSObject, NSMenuDelegate {
             return true
         }
         if code == 53 && f.isEmpty && translator.visible { DispatchQueue.main.async { self.translator.close() }; return true }
+        if code == 53 && f.isEmpty && dotCardOpen { DispatchQueue.main.async { self.hideCard() }; return true }
         guard let id = hoverID, f.isEmpty else { return false }
         if code == 48, issues.first(where: { $0.id == id })?.hasFix == true { DispatchQueue.main.async { self.accept(id) }; return true }
         if code == 53 { DispatchQueue.main.async { self.ignore(id) }; return true }
