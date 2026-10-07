@@ -136,7 +136,7 @@ struct FootButton: View {
 
 // MARK: corner badge
 
-/// The one small round dot in the box's corner, like Grammarly's: gray and spinning while checking, red with the
+/// The one small round dot (16 px) in the box's corner, like Grammarly's: gray and spinning while checking, red with the
 /// number of word fixes, purple when there's a tidy-up, red with a purple corner when there are both.
 struct DotView: View {
     let count: Int
@@ -147,20 +147,20 @@ struct DotView: View {
     var body: some View {
         Button(action: click) {
             ZStack(alignment: .topTrailing) {
-                Circle().fill(fill).frame(width: 22, height: 22)
+                Circle().fill(fill).frame(width: 16, height: 16)
                     .overlay {
                         if count > 0 {
-                            Text(count > 99 ? "99+" : "\(count)").font(.system(size: count > 9 ? 9 : 11, weight: .bold)).foregroundStyle(.white)
+                            Text(count > 99 ? "99+" : "\(count)").font(.system(size: count > 9 ? 7 : 9, weight: .bold)).foregroundStyle(.white)
                         } else if tidy {
-                            Image(systemName: "wand.and.stars").font(.system(size: 10, weight: .semibold)).foregroundStyle(.white)
+                            Image(systemName: "wand.and.stars").font(.system(size: 8, weight: .semibold)).foregroundStyle(.white)
                         } else {
-                            ProgressView().controlSize(.mini).tint(.white).scaleEffect(0.7)
+                            ProgressView().controlSize(.mini).tint(.white).scaleEffect(0.5)
                         }
                     }
                     .shadow(color: .black.opacity(0.25), radius: 1.5, y: 0.5)
                 if count > 0 && tidy {
-                    Circle().fill(Color(nsColor: Kind.tidy.color)).frame(width: 9, height: 9)
-                        .overlay(Circle().stroke(Color.white, lineWidth: 1.5)).offset(x: 2, y: -2)
+                    Circle().fill(Color(nsColor: Kind.tidy.color)).frame(width: 7, height: 7)
+                        .overlay(Circle().stroke(Color.white, lineWidth: 1)).offset(x: 2, y: -2)
                 }
             }
         }
