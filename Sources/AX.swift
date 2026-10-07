@@ -16,8 +16,12 @@ enum AX {
     }
 
     static func focused() -> AXUIElement? {
-        guard let v = attr(system, kAXFocusedUIElementAttribute),
-              CFGetTypeID(v) == AXUIElementGetTypeID() else { return nil }
+        // Asking across all apps sometimes fails (the Claude app after a restart); then ask the app in front.
+        var v = attr(system, kAXFocusedUIElementAttribute)
+        if v == nil, let front = NSWorkspace.shared.frontmostApplication?.processIdentifier {
+            v = attr(AXUIElementCreateApplication(front), kAXFocusedUIElementAttribute)
+        }
+        guard let v, CFGetTypeID(v) == AXUIElementGetTypeID() else { return nil }
         let el = v as! AXUIElement
         AXUIElementSetMessagingTimeout(el, 0.25)
         return el
