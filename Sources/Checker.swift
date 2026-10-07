@@ -57,14 +57,18 @@ struct Layout {
     enum Change: String { case split, blankLine = "blank_line", list, bold, underline }
     var styling: Bool { change == .bold || change == .underline }
     let change: Change
-    let at: [String]            // the start of the sentence or line; for a list, of every line
+    let at: [String]            // the start of the sentence or line, or the phrase to style
     let numbered: Bool
+    var lead = ""               // a list: the sentence's start rewritten to introduce it, ending in a colon
+    var items: [String] = []    // a list: its parts, one per line
 
     var label: String {
         switch change {
         case .split: return "Start a new paragraph here"
         case .blankLine: return "Add a blank line above this line"
-        case .list: return "Make these \(at.count) lines a \(numbered ? "numbered" : "bulleted") list"
+        case .list:
+            let lines = items.enumerated().map { (numbered ? "\($0.offset + 1). " : "\u{2022} ") + $0.element }
+            return "Make this sentence a list:\n" + ([lead] + lines).joined(separator: "\n")
         case .bold: return "Make \u{201C}\(at[0])\u{201D} bold"
         case .underline: return "Underline \u{201C}\(at[0])\u{201D}"
         }
@@ -103,12 +107,16 @@ struct Layout {
             guard let i = starts(first).first else { return nil }
             return [NSRange(location: i, length: (first as NSString).length)]
         case .list:
-            var out: [NSRange] = [], after = -1
-            for t in at {
-                guard let i = starts(t).first(where: { $0 > after && lineStart($0) }) else { return nil }
-                out.append(word(i)); after = i
+            // the whole sentence, from its start to its end mark
+            guard let i = starts(first).first else { return nil }
+            var j = i
+            while j < v.length {
+                let c = v.character(at: j)
+                if c == 10 { break }
+                if c == 46 || c == 63 || c == 33, j + 1 == v.length || [10, 32].contains(v.character(at: j + 1)) { j += 1; break }
+                j += 1
             }
-            return out
+            return [NSRange(location: i, length: j - i)]
         }
     }
 }
@@ -248,7 +256,7 @@ enum LayoutChecker {
     You look at the layout of a message the user is typing in another app, never its wording. Each line break in the text is a real line break, and an empty line is a blank line.
     Suggest a change only when it clearly makes the message easier to read. Most messages need nothing, so an empty list is the usual answer.
     - "split": a paragraph that runs two separate points together, or a long paragraph (about 80 words or more) with a clear turn in it. "at" is the sentence that should start the new paragraph.
-    - "list": three or more lines in a row that are parallel items, like steps, options or things to do, and aren't a list already. "at" is every line, in order. Set "numbered" when the order matters.
+    - "list": one sentence that runs three or more separate things together with commas, like steps, tasks, options or parts to order, where a reader would take them in faster as a list. Not a sentence that tells what happened, and not a few simple words like "red, green and blue". "at" holds one string: the first six words of that sentence, copied exactly. "lead" is the start of the sentence rewritten to introduce the list, ending with a colon, like "Before the install we need to:". "items" are the parts in order, each able to stand alone and starting with a capital letter, keeping the user's words, with spelling fixed, no "and" at the start and no period at the end. Set "numbered" when the order matters.
     - "bold": the one or two details in a long message a reader must not miss, like a deadline, a required action or a warning. "at" is just that phrase, 2 to 6 words, copied exactly. At most two per message, and none in a short or casual message.
     - "underline": only the name of a document, form or section the reader has to go find. "at" is that name, copied exactly. Prefer bold for anything else.
     Never suggest anything for a message under three sentences.
@@ -260,11 +268,13 @@ enum LayoutChecker {
         "properties": [
             "suggestions": ["type": "array", "items": [
                 "type": "object", "additionalProperties": false,
-                "required": ["change", "at", "numbered", "reason"],
+                "required": ["change", "at", "numbered", "lead", "items", "reason"],
                 "properties": [
                     "change": ["type": "string", "enum": ["split", "list", "bold", "underline"]],
                     "at": ["type": "array", "items": ["type": "string"]],
                     "numbered": ["type": "boolean"],
+                    "lead": ["type": "string"],
+                    "items": ["type": "array", "items": ["type": "string"]],
                     "reason": ["type": "string"],
                 ],
             ]],
@@ -278,11 +288,16 @@ enum LayoutChecker {
             // the first 4 words are enough to find a line, and less likely to hold a typo that Fix all then changes;
             // a phrase to style is kept whole
             let keep = c == .bold || c == .underline ? 8 : 4
-            let at = (d["at"] as? [String] ?? []).map { $0.split(separator: " ").prefix(keep).joined(separator: " ") }
+            // Claude sometimes splits a quote into single words; only a split may quote more than one sentence
+            var raw = (d["at"] as? [String] ?? []).map { $0.trimmingCharacters(in: .whitespaces) }
+            if raw.count > 1 && (c != .split || raw.allSatisfy { !$0.contains(" ") }) { raw = [raw.joined(separator: " ")] }
+            let at = raw.map { $0.split(separator: " ").prefix(keep).joined(separator: " ") }
                 .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ".,;: ")) }.filter { !$0.isEmpty }
-            guard let c, !at.isEmpty,
-                  c != .list || at.count >= 3 else { return nil }
-            let l = Layout(change: c, at: at, numbered: d["numbered"] as? Bool ?? false)
+            let lead = (d["lead"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+            let items = (d["items"] as? [String] ?? []).map { $0.trimmingCharacters(in: CharacterSet(charactersIn: " .;,")) }.filter { !$0.isEmpty }
+            guard let c, !at.isEmpty, c != .list || (items.count >= 3 && !lead.isEmpty) else { return nil }
+            var l = Layout(change: c, at: at, numbered: d["numbered"] as? Bool ?? false)
+            if c == .list { l.lead = lead.hasSuffix(":") ? lead : lead + ":"; l.items = items }
             return Issue(range: NSRange(location: 0, length: 0), original: at.joined(separator: " | "), suggestion: l.label,
                          kind: .layout, reason: d["reason"] as? String ?? "", layout: l)
         }

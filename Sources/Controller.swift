@@ -824,27 +824,48 @@ final class Controller: NSObject, NSMenuDelegate {
                 }
             }
         case .list:
-            // type the marker at the start of each line, top down: rich boxes like the Claude app turn
-            // "- " and "1. " into a real list as you type them, and plain boxes keep them as text
-            var k = 0
-            func step() {
-                guard k < l.at.count else { return done(true) }
-                refresh(el)
-                guard let line = Layout(change: .blankLine, at: [l.at[k]], numbered: false).locate(in: value)?.first
-                        ?? (k == 0 ? l.locate(in: value)?.first : nil) else { log("list line \(k + 1) not found"); return done(k > 0) }
-                let marker = l.numbered ? "\(k + 1). " : "- "
-                caret(el, at: line.location) { ok in
-                    guard ok else { log("no cursor at list line \(k + 1)"); return done(k > 0) }
-                    let before = AX.string(el, kAXValueAttribute)
-                    Self.type(marker)
-                    Self.wait(until: { AX.string(el, kAXValueAttribute) != before }) { changed in
-                        guard changed else { log("list marker didn't go in on line \(k + 1)"); return done(k > 0) }
-                        k += 1; step()
+            // The sentence becomes the lead-in and one item per line, pasted in one go. The sentence gets its own
+            // lines: a break before it if text comes first on its line, and after it if text follows.
+            var r = marks[0]
+            var text = ([l.lead] + l.items).joined(separator: "\n")
+            if r.location > 0, value.character(at: r.location - 1) == 32 { r = NSRange(location: r.location - 1, length: r.length + 1); text = "\n" + text }
+            if r.upperBound < value.length, value.character(at: r.upperBound) == 32 { r.length += 1; text += "\n" }
+            insert(el, over: r, text) { ok in
+                guard ok else { return done(false) }
+                // then type the marker at the start of each item, top down: rich boxes like the Claude app turn
+                // "- " and "1. " into a real list as you type them, and plain boxes keep them as text
+                var k = 0
+                func step() {
+                    guard k < l.items.count else { return done(self.listMade(el, l)) }
+                    self.refresh(el)
+                    let start = l.items[k].split(separator: " ").prefix(4).joined(separator: " ")
+                    guard let line = Layout(change: .blankLine, at: [start], numbered: false).locate(in: self.value)?.first else {
+                        log("list item \(k + 1) not found"); return done(k > 0)
+                    }
+                    let marker = l.numbered ? "\(k + 1). " : "- "
+                    self.caret(el, at: line.location) { ok in
+                        guard ok else { log("no cursor at list item \(k + 1)"); return done(k > 0) }
+                        let before = AX.string(el, kAXValueAttribute)
+                        let lists = AX.count(el, role: "AXList")
+                        Self.type(marker)
+                        // a plain box shows the marker in its text; a rich box may only grow a list
+                        Self.wait(until: { AX.string(el, kAXValueAttribute) != before || AX.count(el, role: "AXList") != lists }) { _ in
+                            k += 1; step()
+                        }
                     }
                 }
+                step()
             }
-            step()
         }
+    }
+
+    /// The list is there: as a real list in the box, or as typed markers in its text.
+    func listMade(_ el: AXUIElement, _ l: Layout) -> Bool {
+        refresh(el)
+        let first = l.items[0].split(separator: " ").prefix(4).joined(separator: " ")
+        let marker = l.numbered ? "1. " : "- "
+        if value.range(of: marker + first, options: .caseInsensitive).location != NSNotFound { return true }
+        return AX.count(el, role: "AXList") > 0
     }
 
     /// Bold and underline need a box that keeps styles: a rich web box (its text comes in pieces), or a Mac
