@@ -107,8 +107,11 @@ struct Layout {
             guard let i = starts(first).first else { return nil }
             return [NSRange(location: i, length: (first as NSString).length)]
         case .list:
-            // the whole sentence, from its start to its end mark
-            guard let i = starts(first).first else { return nil }
+            // the whole sentence, from its start to its end mark. Claude sometimes quotes a later part of it,
+            // so go back to the end of the sentence before, or the line start.
+            guard var i = starts(first).first else { return nil }
+            while i > 0, v.character(at: i - 1) != 10,
+                  !(i > 1 && v.character(at: i - 1) == 32 && [46, 63, 33].contains(v.character(at: i - 2))) { i -= 1 }
             var j = i
             while j < v.length {
                 let c = v.character(at: j)
@@ -141,7 +144,7 @@ enum CheckError: Error, CustomStringConvertible {
 enum Checker {
     static let system = """
     You proofread text the user is typing in another app.
-    First write "corrected": the full text with only clear mistakes fixed. Fix misspellings, wrong grammar, wrong word forms, missing hyphens, and words that need a capital letter (names, brands, products, short forms like HVAC, PDF and USB, the word I, sentence starts). Keep the user's words, tone and casual style. Leave web addresses, email addresses, file paths and code exactly as typed. Sttark is the user's company and is spelled right, as are its addresses like sttark.com. Do not reword, shorten, or improve style. Treat the text as finished: if the last sentence has no period, question mark or exclamation point at the end, add one. Only leave it off when the text clearly stops partway, like ending on "the", "to" or "and". Keep punctuation that is already correct. Keep all spacing and line breaks.
+    First write "corrected": the full text with only clear mistakes fixed. Fix misspellings, wrong grammar, wrong word forms, missing hyphens, and words that need a capital letter (names, brands, products, short forms like HVAC, PDF and USB, the word I, sentence starts). Keep the user's words, tone and casual style. Leave web addresses, email addresses, file paths and code exactly as typed. Sttark is the user's company and is spelled right, as are its addresses like sttark.com. Do not reword, shorten, or improve style. Treat the text as finished: if the last sentence has no period, question mark or exclamation point at the end, add one, unless the text is a list item (it starts with a marker like "1.", "-" or "•"). Only leave it off when the text clearly stops partway, like ending on "the", "to" or "and". Keep punctuation that is already correct. Keep all spacing and line breaks.
     Then list every change you made in "issues", in the order they appear. For each: "original" is the exact wrong text copied character for character from the input, as short as possible (only the wrong word or words). "suggestion" is what replaces it. "kind" is spelling, grammar, or capitals. "reason" is at most 12 plain words. If the same mistake appears more than once, list each one. If a word is not a real word and you can't tell what was meant, like "somnerhqw", leave it as is in "corrected" and still list it, with "suggestion" the same as "original". If nothing is wrong, return the text unchanged and an empty list.
     The text may be unfinished: ignore a cut-off last word.
     """
@@ -424,6 +427,8 @@ enum Diff {
 
     /// Claude misses a missing period at the end now and then, so the app checks it too.
     static func endIssues(_ text: String, besides claude: [Issue]) -> [Issue] {
+        // a list item ("1. Order the units", "- Book the crane") doesn't take a period
+        if text.range(of: #"^\s*(\d+[.)]|[-*•])\s"#, options: .regularExpression) != nil { return [] }
         let ns = text as NSString
         guard let last = text.unicodeScalars.reversed().first(where: { !CharacterSet.whitespacesAndNewlines.contains($0) }),
               CharacterSet.alphanumerics.contains(last) else { return [] }
