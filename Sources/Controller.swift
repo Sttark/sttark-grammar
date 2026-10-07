@@ -549,6 +549,7 @@ final class Controller: NSObject, NSMenuDelegate {
                 fakeMouse = CGPoint(x: r.midX, y: r.midY)
             }
         case "away": fakeMouse = CGPoint(x: -5000, y: -5000)
+        case "overbadge": fakeMouse = CGPoint(x: badge.frame.midX, y: badge.frame.midY)
         case "tab": if let id = hoverID { accept(id) }
         case "esc": if let id = hoverID { ignore(id) }
         case "fixall": fixAll()
@@ -565,6 +566,8 @@ final class Controller: NSObject, NSMenuDelegate {
         debugCommand()
         let m = fakeMouse ?? NSEvent.mouseLocation
         if card.isVisible && card.frame.insetBy(dx: -4, dy: -4).contains(m) { lastInside = Date(); return }
+        // the badge can sit on top of an underlined word: over the badge, it's the badge, not the word
+        if badge.isVisible && badge.frame.insetBy(dx: -2, dy: -2).contains(m) { if hoverID != nil { hideCard() }; return }
         if let i = allMarks.first(where: { rects[$0.id]?.contains { $0.insetBy(dx: -1, dy: -4).contains(m) } ?? false }) {
             lastInside = Date()
             if hoverID != i.id { showCard(i) }
@@ -836,7 +839,10 @@ final class Controller: NSObject, NSMenuDelegate {
                 // "- " and "1. " into a real list as you type them, and plain boxes keep them as text
                 var k = 0
                 func step() {
-                    guard k < l.items.count else { return done(self.listMade(el, l)) }
+                    guard k < l.items.count else {
+                        guard self.listMade(el, l) else { return done(false) }
+                        return self.spaceAround(el, l) { done(true) }
+                    }
                     self.refresh(el)
                     let start = l.items[k].split(separator: " ").prefix(4).joined(separator: " ")
                     guard let line = Layout(change: .blankLine, at: [start], numbered: false).locate(in: self.value)?.first else {
@@ -864,6 +870,32 @@ final class Controller: NSObject, NSMenuDelegate {
                 step()
             }
         }
+    }
+
+    /// A blank line above the lead-in and below the last item, where text sits right against them. The lead-in
+    /// stays attached to its list.
+    func spaceAround(_ el: AXUIElement, _ l: Layout, done: @escaping () -> Void) {
+        func start(_ t: String) -> String { t.split(separator: " ").prefix(4).joined(separator: " ") }
+        func spaced(_ t: String) -> Bool { displayText(el).range(of: "\n\n" + t, options: .caseInsensitive) != nil }
+        // below first, so the spot above doesn't move
+        refresh(el)
+        var below: Int?
+        // the last item may start with its number in the box's text ("4. Tell the office"), so find it anywhere
+        let last = value.range(of: start(l.items.last!), options: [.caseInsensitive, .backwards])
+        if last.location != NSNotFound {
+            let end = value.range(of: "\n", options: [], range: NSRange(location: last.location, length: value.length - last.location))
+            if end.location != NSNotFound, end.upperBound < value.length, value.character(at: end.upperBound) != 10 { below = end.upperBound }
+        }
+        func above() {
+            refresh(el)
+            let lead = start(l.lead.trimmingCharacters(in: CharacterSet(charactersIn: ":")))
+            guard let at = Layout(change: .blankLine, at: [lead], numbered: false).locate(in: value)?.first, !spaced(lead) else { return done() }
+            insert(el, over: NSRange(location: at.location, length: 0), "\n") { _ in done() }
+        }
+        guard let b = below else { return above() }
+        let follower = start(value.substring(from: b).components(separatedBy: "\n")[0])
+        if follower.isEmpty || spaced(follower) { return above() }
+        insert(el, over: NSRange(location: b, length: 0), "\n") { _ in above() }
     }
 
     /// The list is there: as a real list in the box, or as typed markers in its text.
