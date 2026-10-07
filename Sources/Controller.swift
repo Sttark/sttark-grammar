@@ -40,7 +40,8 @@ final class Controller: NSObject, NSMenuDelegate {
     var failedAt: [String: Date] = [:]
     var lastError: String?
     var ignored: Set<String> = []
-    var dictionary: Set<String> = []
+    var dictionary: Set<String> = []          // lowercase, for matching
+    var names: [String] = []                  // dictionary words saved with a capital, like Sttark: always written that way
     // tidy up: Claude's cleaned-up copy of the whole message, offered as one change
     var tidyCache: [String: Tidy] = [:]        // whole message -> its tidy-up
     var tidyChecked: Set<String> = []          // messages already sent, with or without a tidy-up
@@ -433,7 +434,7 @@ final class Controller: NSObject, NSMenuDelegate {
             inflight.insert(text)
             log("check \(text.prefix(60))")
             let m = model
-            let known = dictionary.sorted()
+            let known = dictionary.map { w in names.first { $0.lowercased() == w } ?? w }.sorted()
             Task {
                 do {
                     let res = try await Checker.check(text, model: m, words: known)
@@ -452,7 +453,7 @@ final class Controller: NSObject, NSMenuDelegate {
     }
 
     func received(_ text: String, _ claude: CheckResult, model: Model) {
-        var caps = Diff.capitalIssues(text, besides: claude.issues)
+        var caps = Diff.capitalIssues(text, besides: claude.issues) + Diff.nameIssues(text, names: names, besides: claude.issues)
         var ends = Diff.endIssues(text, besides: claude.issues)
         // a one-word last sentence like "ok" needs both: one fix, "Ok."
         if let e = ends.first, let k = caps.firstIndex(where: { $0.range == e.range }) {
@@ -703,7 +704,8 @@ final class Controller: NSObject, NSMenuDelegate {
     func addToDictionary(_ id: UUID) {
         guard let i = issues.first(where: { $0.id == id }) else { return }
         dictionary.insert(i.original.lowercased())
-        try? (dictionary.sorted().joined(separator: "\n") + "\n").write(to: dictionaryURL, atomically: true, encoding: .utf8)
+        if i.original.contains(where: \.isUppercase) && !names.contains(i.original) { names.append(i.original) }
+        saveDictionary()
         issues.removeAll { !allowed($0) }
         hideCard()
     }
@@ -1127,7 +1129,17 @@ final class Controller: NSObject, NSMenuDelegate {
 
     func loadDictionary() {
         let s = (try? String(contentsOf: dictionaryURL, encoding: .utf8)) ?? ""
-        dictionary = Set(s.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces).lowercased() }.filter { !$0.isEmpty })
+        let words = s.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        dictionary = Set(words.map { $0.lowercased() })
+        names = words.filter { $0.contains(where: \.isUppercase) }
+    }
+
+    /// The file keeps the case each word was saved in, so a name like Sttark stays a name.
+    func saveDictionary() {
+        var byLower: [String: String] = [:]
+        for w in dictionary { byLower[w] = w }
+        for n in names { byLower[n.lowercased()] = n }
+        try? (byLower.values.sorted { $0.lowercased() < $1.lowercased() }.joined(separator: "\n") + "\n").write(to: dictionaryURL, atomically: true, encoding: .utf8)
     }
 
     // MARK: menu bar

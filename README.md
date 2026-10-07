@@ -31,7 +31,7 @@ The app is also attached to each [release](https://github.com/Sttark/claude-gram
 
 - Type anywhere. About 4 to 5 seconds after you pause, mistakes get underlined.
 - Hover an underline to see the fix. Click the blue fix, or press **Tab**, to take it. **Esc** ignores it.
-- **Add to dictionary** stops a word from being flagged. Use it for names and jargon.
+- **Add to dictionary** stops a word from being flagged. Use it for names and jargon. A word saved with a capital, like Sttark, counts as a name: the app writes it that way everywhere except inside addresses like sttark.com. Edit the list with **My dictionary…** in the menu.
 - Web addresses, email addresses and file paths are never flagged.
 - A small 12-pixel dot sits in the corner of the text box, away from your text: gray and spinning while it checks, red with the number of mistakes, purple when there's a tidy-up, red with a purple corner when there are both. Hover it for a card with **Fix all** and **Tidy up**, one click each. Click the dot to keep the card open; Esc or a click anywhere else closes it.
 - **Control-Option-F** fixes everything (Fix all), and **Control-Option-T** tidies up when the dot is purple. You can change both (see Shortcuts).
