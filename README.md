@@ -38,10 +38,11 @@ The app is also attached to each [release](https://github.com/Sttark/claude-gram
 
 ### Layout
 
-A purple underline means a layout change: start a new paragraph, add a blank line between paragraphs, or turn lines into a bulleted or numbered list. Hover it to see the change, and take it with the fix button or **Tab**. **Fix all** makes the wording fixes first, then the layout changes.
+A purple underline means a layout change: start a new paragraph, add a blank line between paragraphs, turn lines into a bulleted or numbered list, or make a must-see phrase bold or underlined. Hover it to see the change, and take it with the fix button or **Tab**. **Fix all** makes the wording fixes first, then the layout changes.
 
 - Claude looks at the whole message for paragraph splits and lists once it's at least 40 words or 3 lines. The app finds missing blank lines itself: 3 or more lines in a row that are each a full paragraph.
 - Line breaks go in by pasting, never by pressing Return, which would send the message in the Claude app or Slack. Lists are made by typing "- " or "1. " at the start of each line, which rich boxes like the Claude app turn into a real list.
+- Bold and underline are only suggested in boxes that can hold them, and go in with Command-B or Command-U. If a box turns out not to take one, the app stops suggesting it there. The Claude app's box has neither, and Slack is never sent Command-U, which uploads a file there.
 - Turn it off with **Suggest layout** in the menu. It costs about one extra check each time you pause in a long message.
 
 ### Translate to Chinese

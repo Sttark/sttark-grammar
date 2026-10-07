@@ -54,7 +54,8 @@ enum Model: String, CaseIterable {
 
 /// A change to how a message is laid out, found by the text it applies to so it survives typing elsewhere.
 struct Layout {
-    enum Change: String { case split, blankLine = "blank_line", list }
+    enum Change: String { case split, blankLine = "blank_line", list, bold, underline }
+    var styling: Bool { change == .bold || change == .underline }
     let change: Change
     let at: [String]            // the start of the sentence or line; for a list, of every line
     let numbered: Bool
@@ -64,6 +65,8 @@ struct Layout {
         case .split: return "Start a new paragraph here"
         case .blankLine: return "Add a blank line above this line"
         case .list: return "Make these \(at.count) lines a \(numbered ? "numbered" : "bulleted") list"
+        case .bold: return "Make \u{201C}\(at[0])\u{201D} bold"
+        case .underline: return "Underline \u{201C}\(at[0])\u{201D}"
         }
     }
 
@@ -95,6 +98,10 @@ struct Layout {
         case .blankLine:
             guard let i = starts(first).first(where: { $0 > 0 && lineStart($0) }) else { return nil }
             return [word(i)]
+        case .bold, .underline:
+            // the whole phrase; the first copy of it
+            guard let i = starts(first).first else { return nil }
+            return [NSRange(location: i, length: (first as NSString).length)]
         case .list:
             var out: [NSRange] = [], after = -1
             for t in at {
@@ -242,6 +249,8 @@ enum LayoutChecker {
     Suggest a change only when it clearly makes the message easier to read. Most messages need nothing, so an empty list is the usual answer.
     - "split": a paragraph that runs two separate points together, or a long paragraph (about 80 words or more) with a clear turn in it. "at" is the sentence that should start the new paragraph.
     - "list": three or more lines in a row that are parallel items, like steps, options or things to do, and aren't a list already. "at" is every line, in order. Set "numbered" when the order matters.
+    - "bold": the one or two details in a long message a reader must not miss, like a deadline, a required action or a warning. "at" is just that phrase, 2 to 6 words, copied exactly. At most two per message, and none in a short or casual message.
+    - "underline": only the name of a document, form or section the reader has to go find. "at" is that name, copied exactly. Prefer bold for anything else.
     Never suggest anything for a message under three sentences.
     In "at", copy the first six or so words of each sentence or line exactly as typed, enough to find it. "reason" is at most 10 plain words.
     """
@@ -253,7 +262,7 @@ enum LayoutChecker {
                 "type": "object", "additionalProperties": false,
                 "required": ["change", "at", "numbered", "reason"],
                 "properties": [
-                    "change": ["type": "string", "enum": ["split", "list"]],
+                    "change": ["type": "string", "enum": ["split", "list", "bold", "underline"]],
                     "at": ["type": "array", "items": ["type": "string"]],
                     "numbered": ["type": "boolean"],
                     "reason": ["type": "string"],
@@ -265,9 +274,13 @@ enum LayoutChecker {
     static func check(_ text: String, model: Model) async throws -> ([Issue], Int, Int) {
         let (reply, inTokens, outTokens) = try await Checker.ask(system: system, schema: schema, text: text, model: model)
         let found = (reply["suggestions"] as? [[String: Any]] ?? []).compactMap { d -> Issue? in
-            // the first 4 words are enough to find a line, and less likely to hold a typo that Fix all then changes
-            let at = (d["at"] as? [String] ?? []).map { $0.split(separator: " ").prefix(4).joined(separator: " ") }.filter { !$0.isEmpty }
-            guard let c = Layout.Change(rawValue: d["change"] as? String ?? ""), !at.isEmpty,
+            let c = Layout.Change(rawValue: d["change"] as? String ?? "")
+            // the first 4 words are enough to find a line, and less likely to hold a typo that Fix all then changes;
+            // a phrase to style is kept whole
+            let keep = c == .bold || c == .underline ? 8 : 4
+            let at = (d["at"] as? [String] ?? []).map { $0.split(separator: " ").prefix(keep).joined(separator: " ") }
+                .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ".,;: ")) }.filter { !$0.isEmpty }
+            guard let c, !at.isEmpty,
                   c != .list || at.count >= 3 else { return nil }
             let l = Layout(change: c, at: at, numbered: d["numbered"] as? Bool ?? false)
             return Issue(range: NSRange(location: 0, length: 0), original: at.joined(separator: " | "), suggestion: l.label,

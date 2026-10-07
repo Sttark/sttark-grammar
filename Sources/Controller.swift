@@ -711,7 +711,13 @@ final class Controller: NSObject, NSMenuDelegate {
                     self.recordUsage(CheckResult(issues: [], inputTokens: inTokens, outputTokens: outTokens), model: m)
                     log("layout got \(found.count): " + found.map { "\($0.layout!.change.rawValue) \($0.original)" }.joined(separator: "; "))
                     // marks that can't be found in the text as it is now drop out on the next draw
-                    if self.layoutOn { self.layoutIssues = found.filter { !self.ignored.contains($0.ignoreKey) } }
+                    let canStyle = self.canStyle(el)
+                    let kept = found.filter { i in
+                        guard let l = i.layout, l.styling else { return true }
+                        return canStyle && !self.styleRuledOut(l.change)
+                    }
+                    self.layoutCache[key] = kept
+                    if self.layoutOn { self.layoutIssues = kept.filter { !self.ignored.contains($0.ignoreKey) } }
                 }
             } catch {
                 await MainActor.run { self.layoutInflight = nil; self.layoutCache[key] = []; log("layout error \(error)") }
@@ -763,7 +769,11 @@ final class Controller: NSObject, NSMenuDelegate {
             }
             let i = todo.removeFirst()
             applyLayout(el, i) { ok in
-                if ok { self.layoutIssues.removeAll { $0.id == i.id } } else { log("layout '\(i.suggestion)' didn't go in") }
+                if ok {
+                    self.layoutIssues.removeAll { $0.id == i.id }
+                    // a style leaves the text the same, so don't bring the suggestion back from the saved results
+                    for k in self.layoutCache.keys { self.layoutCache[k]?.removeAll { $0.ignoreKey == i.ignoreKey } }
+                } else { log("layout '\(i.suggestion)' didn't go in") }
                 next()
             }
         }
@@ -775,11 +785,44 @@ final class Controller: NSObject, NSMenuDelegate {
         guard let l = i.layout, let marks = l.locate(in: value) else { return done(false) }
         switch l.change {
         case .split:
-            // the space before the sentence becomes a break, or a blank line if the message uses them
-            let gap = displayText(el).contains("\n\n") ? "\n\n" : "\n"
-            insert(el, over: NSRange(location: marks[0].location - 1, length: 1), gap, done: done)
+            // the space before the sentence becomes a line break; if the message uses blank lines, add one too.
+            // Pasting two breaks at once gives one or two empty lines depending on the box, so it's two steps.
+            let blank = displayText(el).contains("\n\n")
+            let start = marks[0]
+            insert(el, over: NSRange(location: start.location - 1, length: 1), "\n") { ok in
+                guard ok, blank else { return done(ok) }
+                self.refresh(el)
+                // some boxes make a blank line from one pasted break already
+                let opening = l.at.last.map { String($0.prefix(20)) } ?? ""
+                if self.displayText(el).contains("\n\n" + opening) || l.at.contains(where: { self.displayText(el).contains("\n\n" + $0.prefix(20)) }) { return done(true) }
+                // the sentence now starts its own line, one place earlier than before
+                let line = NSRange(location: start.location - 1 + 1, length: 0)
+                guard line.location <= self.value.length, line.location > 0, self.value.character(at: line.location - 1) == 10 else { return done(true) }
+                self.insert(el, over: line, "\n") { _ in done(true) }
+            }
         case .blankLine:
             insert(el, over: NSRange(location: marks[0].location, length: 0), "\n", done: done)
+        case .bold, .underline:
+            let r = marks[0]
+            let phrase = value.substring(with: r)
+            // an earlier try in this box may have just found the style doesn't work: don't press it again
+            if styleRuledOut(l.change) { return done(false) }
+            let before = styledAlone(el, phrase)
+            select(el, r, expect: phrase) { ok in
+                guard ok else { return done(false) }
+                Self.key(l.change == .bold ? 11 : 32, .maskCommand)      // B, U
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    // a style splits the phrase into its own piece of text; if it didn't, this app can't do it
+                    // (if it was already on its own there's no way to tell, so trust the shortcut)
+                    let took = before || self.styledAlone(el, phrase) || self.nativeStyled(el, r, l.change)
+                    if !took {
+                        self.noStyle.insert(self.styleKey(l.change))
+                        log("\(l.change.rawValue) doesn't work in \(self.appName); won't suggest it here again")
+                    }
+                    self.select(el, NSRange(location: r.upperBound, length: 0))
+                    done(took)
+                }
+            }
         case .list:
             // type the marker at the start of each line, top down: rich boxes like the Claude app turn
             // "- " and "1. " into a real list as you type them, and plain boxes keep them as text
@@ -802,6 +845,57 @@ final class Controller: NSObject, NSMenuDelegate {
             }
             step()
         }
+    }
+
+    /// Bold and underline need a box that keeps styles: a rich web box (its text comes in pieces), or a Mac
+    /// text view whose text carries fonts. Never underline in Slack, where Command-U uploads a file.
+    func canStyle(_ el: AXUIElement) -> Bool {
+        if !AX.children(el).isEmpty { return true }
+        var cf = CFRange(location: 0, length: min(1, value.length)); var v: AnyObject?
+        guard let arg = AXValueCreate(.cfRange, &cf),
+              AXUIElementCopyParameterizedAttributeValue(el, kAXAttributedStringForRangeParameterizedAttribute as CFString, arg, &v) == .success,
+              let a = v as? NSAttributedString, a.length > 0,
+              let font = a.attribute(NSAttributedString.Key("AXFont"), at: 0, effectiveRange: nil) as? [String: Any] else { return false }
+        return font["AXFontName"] != nil
+    }
+
+    var noStyle: Set<String> {
+        // Slack: Command-U uploads a file. The Claude app's box has no bold or underline (tested).
+        get { Set(defaults.stringArray(forKey: "noStyle") ?? ["com.tinyspeck.slackmacgap/underline",
+                                                             "com.anthropic.claudefordesktop/bold", "com.anthropic.claudefordesktop/underline"]) }
+        set { defaults.set(Array(newValue), forKey: "noStyle") }
+    }
+    /// Ruled out for this kind of box, or for the whole app.
+    func styleRuledOut(_ c: Layout.Change) -> Bool {
+        let app = NSRunningApplication(processIdentifier: element.map(AX.pid) ?? 0)?.bundleIdentifier ?? appName
+        return noStyle.contains(styleKey(c)) || noStyle.contains("\(app)/\(c.rawValue)")
+    }
+
+    /// Per app, and in a browser per kind of box (its page classes), so one site that can't underline doesn't
+    /// turn it off for every site.
+    func styleKey(_ c: Layout.Change) -> String {
+        let app = NSRunningApplication(processIdentifier: element.map(AX.pid) ?? 0)?.bundleIdentifier ?? appName
+        let classes = (element.flatMap { AX.attr($0, "AXDOMClassList") } as? [String] ?? [])
+            .filter { !$0.localizedCaseInsensitiveContains("focus") }.sorted().joined(separator: ".")
+        return classes.isEmpty ? "\(app)/\(c.rawValue)" : "\(app)/\(classes)/\(c.rawValue)"
+    }
+
+    /// In a web box: the phrase is a piece of text on its own.
+    func styledAlone(_ el: AXUIElement, _ phrase: String) -> Bool {
+        AX.textRuns(el, value: value).contains { value.substring(with: $0.0) == phrase }
+    }
+
+    /// In a Mac text view: the font at the phrase is bold, or it's underlined.
+    func nativeStyled(_ el: AXUIElement, _ r: NSRange, _ c: Layout.Change) -> Bool {
+        guard AX.children(el).isEmpty else { return false }
+        var cf = CFRange(location: r.location, length: r.length); var v: AnyObject?
+        guard let arg = AXValueCreate(.cfRange, &cf),
+              AXUIElementCopyParameterizedAttributeValue(el, kAXAttributedStringForRangeParameterizedAttribute as CFString, arg, &v) == .success,
+              let a = v as? NSAttributedString, a.length > 0 else { return false }
+        let attrs = a.attributes(at: 0, effectiveRange: nil)
+        if c == .underline { return (attrs[NSAttributedString.Key("AXUnderline")] as? Int ?? 0) != 0 }
+        let name = (attrs[NSAttributedString.Key("AXFont")] as? [String: Any])?["AXFontName"] as? String ?? ""
+        return name.localizedCaseInsensitiveContains("bold")
     }
 
     /// Selects a range (or puts the cursor at a spot) and pastes text over it, after checking it's the right text.
