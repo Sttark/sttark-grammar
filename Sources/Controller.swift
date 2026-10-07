@@ -377,7 +377,8 @@ final class Controller: NSObject, NSMenuDelegate {
 
     func allowed(_ i: Issue) -> Bool {
         if ignored.contains(i.ignoreKey) { return false }
-        if i.kind == .spelling && dictionary.contains(i.original.lowercased()) { return false }
+        // a dictionary word is spelled right, but a fix that only gives it a capital still shows
+        if i.kind == .spelling && dictionary.contains(i.original.lowercased()) && i.original.lowercased() != i.suggestion.lowercased() { return false }
         // a fix that would change a dictionary word, like "docs.sttark.com" -> "docs.stark.com"
         let words = { (s: String) in Set(s.lowercased().split { !($0.isLetter || $0.isNumber || $0 == "'" || $0 == "’") }.map(String.init)) }
         return words(i.original).subtracting(words(i.suggestion)).isDisjoint(with: dictionary)

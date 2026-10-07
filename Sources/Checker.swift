@@ -257,7 +257,7 @@ enum Checker {
     }
 
     static func check(_ text: String, model: Model, words: [String] = []) async throws -> CheckResult {
-        let sys = words.isEmpty ? system : system + "\nThe user's dictionary. These are spelled right, never change them: " + words.prefix(500).joined(separator: ", ")
+        let sys = words.isEmpty ? system : system + "\nThe user's dictionary. These are spelled right, so never change their letters, but still give them a capital letter where one belongs, like a company or person's name: " + words.prefix(500).joined(separator: ", ")
         let (reply, inTokens, outTokens) = try await ask(system: sys, schema: schema, text: text, model: model)
         guard let corrected = reply["corrected"] as? String else { throw CheckError.badReply("no corrected copy") }
         let notes = (reply["issues"] as? [[String: Any]] ?? []).compactMap { d -> (String, String, Kind, String)? in
