@@ -417,6 +417,36 @@ enum Diff {
         return out
     }
 
+    /// The smallest change that does the fix, never starting or ending with a space. Some boxes (Asana, for
+    /// one) drop spaces at the ends of pasted text, which would join two words. So only the part that changes is
+    /// replaced, and a neighboring letter is taken along on any side that would start or end with a space.
+    static func tighten(_ r: NSRange, _ suggestion: String, in v: NSString) -> (NSRange, String) {
+        let o = Array(v.substring(with: r).utf16), s = Array(suggestion.utf16)
+        // leave text with emoji and other paired characters alone rather than risk splitting one
+        if (o + s).contains(where: { UTF16.isLeadSurrogate($0) || UTF16.isTrailSurrogate($0) }) { return (r, suggestion) }
+        var p = 0
+        while p < o.count && p < s.count && o[p] == s[p] { p += 1 }
+        var q = 0
+        while q < o.count - p && q < s.count - p && o[o.count - 1 - q] == s[s.count - 1 - q] { q += 1 }
+        var lo = r.location + p, hi = r.upperBound - q
+        var mid = Array(s[p..<(s.count - q)])
+        if hi - lo == 0 && mid.isEmpty { return (r, suggestion) }
+        func space(_ c: unichar) -> Bool { c == 32 || c == 9 || c == 0xA0 }
+        // never a bare cursor: at a line end it can land on the next line. Keep a letter selected.
+        if hi == lo {
+            if lo > 0 && v.character(at: lo - 1) != 10 { lo -= 1; mid.insert(v.character(at: lo), at: 0) }
+            else if hi < v.length && v.character(at: hi) != 10 { mid.append(v.character(at: hi)); hi += 1 }
+        }
+        func edgeLeft() -> Bool { mid.first.map(space) ?? true }
+        func edgeRight() -> Bool { mid.last.map(space) ?? true }
+        // take letters from the left while the text would start with a space (or is empty, a deletion)
+        while edgeLeft() && lo > 0 && v.character(at: lo - 1) != 10 { lo -= 1; mid.insert(v.character(at: lo), at: 0); if !space(mid[0]) { break } }
+        while edgeRight() && hi < v.length && v.character(at: hi) != 10 { mid.append(v.character(at: hi)); hi += 1; if !space(mid.last!) { break } }
+        // at a line start, the left can't be widened: take from the right
+        while edgeLeft() && hi < v.length && v.character(at: hi) != 10 { mid.append(v.character(at: hi)); hi += 1; if !space(mid.last!) { break } }
+        return (NSRange(location: lo, length: hi - lo), String(utf16CodeUnits: mid, count: mid.count))
+    }
+
     /// Words a sentence can't end on, so text ending on one is still being typed.
     static let unfinished: Set<String> = ["a", "an", "the", "to", "and", "or", "but", "nor", "of", "for", "with", "in", "on", "at",
         "from", "by", "into", "onto", "about", "as", "so", "because", "than", "that", "which", "who", "whose", "if", "when",
