@@ -61,6 +61,7 @@ struct Layout {
     let numbered: Bool
     var lead = ""               // a list: the sentence's start rewritten to introduce it, ending in a colon
     var items: [String] = []    // a list: its parts, one per line
+    var until = ""              // a list: the last words of the last sentence it replaces
 
     var label: String {
         switch change {
@@ -113,6 +114,22 @@ struct Layout {
             while i > 0, v.character(at: i - 1) != 10,
                   !(i > 1 && v.character(at: i - 1) == 32 && [46, 63, 33].contains(v.character(at: i - 2))) { i -= 1 }
             var j = i
+            if !until.isEmpty {
+                // through the last sentence the list covers, on the same line; if it can't be found, no list
+                let lineEnd = v.range(of: "\n", options: [], range: NSRange(location: i, length: v.length - i))
+                let limit = lineEnd.location == NSNotFound ? v.length : lineEnd.location
+                // Claude may copy the end with a typo fixed, so try shorter and shorter tails of it
+                let w = until.trimmingCharacters(in: CharacterSet(charactersIn: ".?! ")).split(separator: " ")
+                var e = NSRange(location: NSNotFound, length: 0)
+                for k in [6, 4, 3, 2, 1] where k <= w.count {
+                    e = v.range(of: w.suffix(k).joined(separator: " "), options: [.caseInsensitive, .backwards], range: NSRange(location: i, length: limit - i))
+                    if e.location != NSNotFound { break }
+                }
+                guard e.location != NSNotFound else { return nil }
+                j = e.upperBound
+                if j < limit, [46, 63, 33].contains(v.character(at: j)) { j += 1 }
+                return [NSRange(location: i, length: j - i)]
+            }
             while j < v.length {
                 let c = v.character(at: j)
                 if c == 10 { break }
@@ -259,7 +276,7 @@ enum LayoutChecker {
     You look at the layout of a message the user is typing in another app, never its wording. Each line break in the text is a real line break, and an empty line is a blank line.
     Suggest a change only when it clearly makes the message easier to read. Most messages need nothing, so an empty list is the usual answer.
     - "split": a paragraph that runs two separate points together, or a long paragraph (about 80 words or more) with a clear turn in it. "at" is the sentence that should start the new paragraph.
-    - "list": one sentence that runs three or more separate things together with commas, like steps, tasks, options or parts to order, where a reader would take them in faster as a list. Not a sentence that tells what happened, and not a few simple words like "red, green and blue". "at" holds one string: the first six words of that sentence, copied exactly. "lead" is the start of the sentence rewritten to introduce the list, ending with a colon, like "Before the install we need to:". "items" are the parts in order, each able to stand alone and starting with a capital letter, keeping the user's words, with spelling fixed, no "and" at the start and no period at the end. Set "numbered" when the order matters.
+    - "list": three or more separate things, like steps, tasks, options, parts to order or points being made, run together in one sentence with commas or across a few sentences in a row, where a reader would take them in faster as a list. Not sentences that tell what happened, and not a few simple words like "red, green and blue". The list replaces every sentence it covers, so cover each one whose point is in the list, and none whose point isn't. "at" holds one string: the first six words of the first sentence covered, copied exactly. "until" is the last six words of the last sentence covered, copied exactly with its end mark if it has one. "lead" introduces the list and ends with a colon, like "Before the install we need to:". "items" are the things in order, each able to stand alone and starting with a capital letter. Keep everything the covered sentences say, including what the user wants instead, since those sentences are removed. Spelling fixed, no "and" at the start and no period at the end. Set "numbered" when the order matters.
     - "bold": the one or two details in a long message a reader must not miss, like a deadline, a required action or a warning. "at" is just that phrase, 2 to 6 words, copied exactly. At most two per message, and none in a short or casual message.
     - "underline": only the name of a document, form or section the reader has to go find. "at" is that name, copied exactly. Prefer bold for anything else.
     Never suggest anything for a message under three sentences.
@@ -271,13 +288,14 @@ enum LayoutChecker {
         "properties": [
             "suggestions": ["type": "array", "items": [
                 "type": "object", "additionalProperties": false,
-                "required": ["change", "at", "numbered", "lead", "items", "reason"],
+                "required": ["change", "at", "numbered", "lead", "items", "until", "reason"],
                 "properties": [
                     "change": ["type": "string", "enum": ["split", "list", "bold", "underline"]],
                     "at": ["type": "array", "items": ["type": "string"]],
                     "numbered": ["type": "boolean"],
                     "lead": ["type": "string"],
                     "items": ["type": "array", "items": ["type": "string"]],
+                    "until": ["type": "string"],
                     "reason": ["type": "string"],
                 ],
             ]],
@@ -301,7 +319,10 @@ enum LayoutChecker {
             let items = (d["items"] as? [String] ?? []).map { $0.trimmingCharacters(in: CharacterSet(charactersIn: " .;,")) }.filter { !$0.isEmpty }
             guard let c, !at.isEmpty, c != .list || (items.count >= 3 && !lead.isEmpty) else { return nil }
             var l = Layout(change: c, at: at, numbered: d["numbered"] as? Bool ?? false)
-            if c == .list { l.lead = lead.hasSuffix(":") ? lead : lead + ":"; l.items = items }
+            if c == .list {
+                l.lead = lead.hasSuffix(":") ? lead : lead + ":"; l.items = items
+                l.until = (d["until"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+            }
             return Issue(range: NSRange(location: 0, length: 0), original: at.joined(separator: " | "), suggestion: l.label,
                          kind: .layout, reason: d["reason"] as? String ?? "", layout: l)
         }
