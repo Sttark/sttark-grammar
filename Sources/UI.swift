@@ -154,6 +154,7 @@ struct BadgeView: View {
             }
             if count > 0 || checking || !tidy { fixButton }
         }
+        .fixedSize()                        // never squeeze "Fix all" into "Fix..."
         .padding(3)
     }
 

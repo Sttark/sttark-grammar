@@ -493,10 +493,11 @@ final class Controller: NSObject, NSMenuDelegate {
             }
             overlay.orderFrontRegardless()
         }
-        placeBadge(frame)
+        placeBadge(frame, el)
     }
 
     var drawnCount = 0
+    var lastSpot = ""
     var runs: [(NSRange, AXUIElement)] = []
     var runsFor: NSString?
     var runsNeeded = false
@@ -524,7 +525,7 @@ final class Controller: NSObject, NSMenuDelegate {
         return lines
     }
 
-    func placeBadge(_ frame: CGRect) {
+    func placeBadge(_ frame: CGRect, _ el: AXUIElement) {
         let checking = paragraphs(value).contains { inflight.contains($0.1) }
         let count = issues.count
         let tidyNow = tidy != nil
@@ -539,11 +540,33 @@ final class Controller: NSObject, NSMenuDelegate {
         let size = badge.contentView!.fittingSize
         let screen = NSScreen.screens.first { $0.frame.intersects(frame) }?.visibleFrame ?? frame
         let area = frame.intersection(screen).isNull ? frame : frame.intersection(screen)
-        var origin = CGPoint(x: area.maxX - size.width - 4, y: area.minY + 4)
-        if area.height < 44 { origin.y = area.midY - size.height / 2 }
-        let f = CGRect(origin: origin, size: size)
+        let f = badgeSpot(size, area: area, box: frame, screen: screen, el)
         if badge.frame != f { badge.setFrame(f, display: true) }
         if !badge.isVisible { badge.orderFrontRegardless() }
+    }
+
+    /// Somewhere the buttons don't cover the text you're typing: to the right of the last line if there's room,
+    /// else in the empty space under the text, else just outside the box (below it, or above if there's no room).
+    func badgeSpot(_ size: CGSize, area: CGRect, box: CGRect, screen: CGRect, _ el: AXUIElement) -> CGRect {
+        let corner = CGRect(x: area.maxX - size.width - 4, y: area.minY + 4, width: size.width, height: size.height)
+        guard value.length > 0 else { return corner }
+        // the last line: where the last character sits (AppKit coordinates, origin bottom-left)
+        guard let raw = bounds(el, NSRange(location: value.length - 1, length: 1)) else { return corner }
+        var last = AX.toCocoa(raw)
+        if value.character(at: value.length - 1) == 10 { last.size.width = 0 }    // an empty last line
+        let right = CGRect(x: area.maxX - size.width - 4, y: last.midY - size.height / 2, width: size.width, height: size.height)
+        func spot(_ name: String, _ r: CGRect) -> CGRect {
+            if debug && name != lastSpot { lastSpot = name; log("badge \(name) of text: last line ends at x \(Int(last.maxX)), badge \(r)") }
+            return r
+        }
+        // the buttons are taller than a line of text, so they may stick a little past the box's edge
+        if right.minX >= last.maxX + 8 && right.minX >= area.minX && right.midY >= area.minY && right.midY <= area.maxY {
+            return spot("right of last line", right)
+        }
+        if last.minY - area.minY >= size.height + 6 { return spot("under the text", corner) }
+        let below = CGRect(x: box.maxX - size.width, y: box.minY - size.height - 2, width: size.width, height: size.height)
+        if below.minY >= screen.minY { return spot("below the box", below) }
+        return spot("above the box", CGRect(x: box.maxX - size.width, y: box.maxY + 2, width: size.width, height: size.height))
     }
 
     // MARK: hover card
