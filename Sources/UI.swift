@@ -136,45 +136,111 @@ struct FootButton: View {
 
 // MARK: corner badge
 
-struct BadgeView: View {
+/// The one small round dot in the box's corner, like Grammarly's: gray and spinning while checking, red with the
+/// number of word fixes, purple when there's a tidy-up, red with a purple corner when there are both.
+struct DotView: View {
     let count: Int
     let checking: Bool
     let tidy: Bool
+    let click: () -> Void
+
+    var body: some View {
+        Button(action: click) {
+            ZStack(alignment: .topTrailing) {
+                Circle().fill(fill).frame(width: 22, height: 22)
+                    .overlay {
+                        if count > 0 {
+                            Text(count > 99 ? "99+" : "\(count)").font(.system(size: count > 9 ? 9 : 11, weight: .bold)).foregroundStyle(.white)
+                        } else if tidy {
+                            Image(systemName: "wand.and.stars").font(.system(size: 10, weight: .semibold)).foregroundStyle(.white)
+                        } else {
+                            ProgressView().controlSize(.mini).tint(.white).scaleEffect(0.7)
+                        }
+                    }
+                    .shadow(color: .black.opacity(0.25), radius: 1.5, y: 0.5)
+                if count > 0 && tidy {
+                    Circle().fill(Color(nsColor: Kind.tidy.color)).frame(width: 9, height: 9)
+                        .overlay(Circle().stroke(Color.white, lineWidth: 1.5)).offset(x: 2, y: -2)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(3)
+    }
+
+    var fill: Color {
+        if count > 0 { return Color(nsColor: Kind.spelling.color) }
+        if tidy { return Color(nsColor: Kind.tidy.color) }
+        return Color.gray.opacity(0.85)
+    }
+}
+
+/// What hovering the dot shows: Fix all and Tidy up, one click each, with the tidied message to look at.
+struct DotCardView: View {
+    let count: Int
+    let checking: Bool
+    let tidy: Tidy?
+    let warn: Bool
     let fixAll: () -> Void
     let tidyUp: () -> Void
 
     var body: some View {
-        HStack(spacing: 4) {
-            if tidy {
-                Button(action: tidyUp) {
-                    Text("Tidy up").font(.system(size: 11, weight: .medium)).foregroundStyle(.white)
-                        .padding(.horizontal, 9).frame(height: 24)
-                        .background(Capsule().fill(Color(nsColor: Kind.tidy.color)))
-                }.buttonStyle(.plain)
+        VStack(alignment: .leading, spacing: 0) {
+            if count > 0 {
+                row(color: Kind.spelling.color, title: "\(count) \(count == 1 ? "fix" : "fixes")", detail: "Spelling, grammar and capitals",
+                    button: "Fix all", action: fixAll)
             }
-            if count > 0 || checking || !tidy { fixButton }
-        }
-        .fixedSize()                        // never squeeze "Fix all" into "Fix..."
-        .padding(3)
-    }
-
-    var fixButton: some View {
-        Button(action: fixAll) {
-            HStack(spacing: 5) {
-                if count > 0 {
-                    Text("\(count)").font(.system(size: 12, weight: .bold))
-                    Text("Fix all").font(.system(size: 11, weight: .medium))
-                } else {
-                    ProgressView().controlSize(.mini).tint(.white)
-                    Text("Checking").font(.system(size: 11, weight: .medium))
+            if count > 0 && tidy != nil { Divider() }
+            if let t = tidy {
+                row(color: Kind.tidy.color, title: "Tidy up", detail: t.summary, button: "Tidy up", action: tidyUp)
+                ScrollView {
+                    Text(preview(t)).font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxHeight: 220)
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.05)))
+                .padding(.horizontal, 10).padding(.bottom, warn ? 4 : 10)
+                if warn {
+                    Text("Links and @mentions become plain text. Command-Z undoes it.")
+                        .font(.system(size: 10.5)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 12).padding(.bottom, 10)
                 }
             }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 9).frame(height: 24)
-            .background(Capsule().fill(count > 0 ? Color(nsColor: Kind.spelling.color) : Color.gray.opacity(0.85)))
+            if count == 0 && tidy == nil {
+                Text(checking ? "Checking…" : "Nothing to fix").font(.system(size: 12)).foregroundStyle(.secondary).padding(12)
+            }
         }
-        .buttonStyle(.plain)
-        .disabled(count == 0)
+        .frame(width: 340)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 0.5))
+    }
+
+    func row(color: NSColor, title: String, detail: String, button: String, action: @escaping () -> Void) -> some View {
+        HStack(alignment: .center, spacing: 9) {
+            Circle().fill(Color(nsColor: color)).frame(width: 8, height: 8)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 13, weight: .semibold))
+                if !detail.isEmpty {
+                    Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 6)
+            Button(action: action) {
+                Text(button).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .background(RoundedRectangle(cornerRadius: 5).fill(Color(nsColor: color)))
+            }.buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+    }
+
+    /// Bold phrases shown bold.
+    func preview(_ t: Tidy) -> AttributedString {
+        var a = AttributedString(t.preview)
+        for b in t.bold { if let r = a.range(of: b) { a[r].inlinePresentationIntent = .stronglyEmphasized } }
+        return a
     }
 }
 

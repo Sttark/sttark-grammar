@@ -33,12 +33,12 @@ The app is also attached to each [release](https://github.com/Sttark/claude-gram
 - Hover an underline to see the fix. Click the blue fix, or press **Tab**, to take it. **Esc** ignores it.
 - **Add to dictionary** stops a word from being flagged. Use it for names and jargon.
 - Web addresses, email addresses and file paths are never flagged.
-- The badge in the corner of the text box shows how many mistakes there are. Click it to fix them all.
+- A small dot sits in the corner of the text box, away from your text: gray and spinning while it checks, red with the number of mistakes, purple when there's a tidy-up, red with a purple corner when there are both. Hover it for a card with **Fix all** and **Tidy up**, one click each. Click the dot to keep the card open; Esc or a click anywhere else closes it.
 - **Control-Option-F** fixes the paragraph you're in. You can change it (see Shortcuts).
 
 ### Tidy up
 
-For a longer message, a purple **Tidy up** button shows next to the badge when Claude has a cleaner version: paragraphs split, blank lines between them, things run together turned into a bulleted or numbered list, and spelling fixed. One click swaps your message for it. Command-Z undoes it.
+For a longer message, the dot turns purple when Claude has a cleaner version: paragraphs split, blank lines between them, things run together turned into a bulleted or numbered list, and spelling fixed. Hover the dot to see it, and click **Tidy up** to swap your message for it. Command-Z undoes it.
 
 - Claude gets the whole message once you pause, if it's at least 20 words or 3 lines. It keeps your meaning and only rewords what a list needs.
 - Tidying pastes the new text over the whole message, then types "- " or "1. " at the start of each list item (rich boxes like the Claude app turn that into a real list) and adds blank lines one at a time. It never presses Return, which would send the message in the Claude app or Slack.
@@ -135,7 +135,7 @@ On a test paragraph with 12 mistakes, Haiku 4.5 caught 11 or 12 in about 3 s. So
 - `Sources/AX.swift`: Accessibility API helpers (focused text box, where text sits on screen, edits)
 - `Sources/Checker.swift`: Claude request, prompt, API key storage, and the word-by-word comparison
 - `Sources/Controller.swift`: main loop, underline layout, hover card, fixes, keys, menu
-- `Sources/UI.swift`: underline overlay, hover card, badge
+- `Sources/UI.swift`: underline overlay, hover card, the corner dot and its card
 - `Sources/Translate.swift`: the right-click translate item and its card. It's declared under `NSServices` in `Info.plist`.
 - `Sources/Speak.swift`: read aloud. It streams audio from OpenAI's realtime voice model over a WebSocket and plays it as it arrives, with a fresh audio engine for each read so it follows the current speaker.
 - `Sources/Shortcuts.swift`: the shortcuts you can change and how they're saved
