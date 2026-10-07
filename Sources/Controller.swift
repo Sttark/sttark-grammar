@@ -796,7 +796,23 @@ final class Controller: NSObject, NSMenuDelegate {
     /// The box already puts space between paragraphs (like a web page does), so an empty line would look like two.
     /// Measured on screen: from the end of one paragraph to the start of the next, more than half a line.
     func paragraphsSpaced(_ el: AXUIElement) -> Bool {
+        // Rich boxes (the Claude app, web editors) show each paragraph as a block, and a blank line as an empty
+        // block. Measure between two paragraph blocks that sit right after each other.
+        let blocks = AX.children(el).filter { AX.string($0, kAXRoleAttribute) == "AXGroup" || AX.string($0, kAXRoleAttribute) == "AXList" }
+        if blocks.count >= 2 {
+            for (a, b) in zip(blocks, blocks.dropFirst()) {
+                guard AX.string(a, kAXRoleAttribute) == "AXGroup", AX.string(b, kAXRoleAttribute) == "AXGroup",
+                      AX.string(a, kAXSubroleAttribute) != "AXEmptyGroup", AX.string(b, kAXSubroleAttribute) != "AXEmptyGroup",
+                      let fa = AX.frame(a), let fb = AX.frame(b), fa.height > 0 else { continue }
+                let gap = fb.minY - fa.maxY                             // screen positions run downward
+                note("tidy: paragraph gap \(Int(gap)) between blocks")
+                return gap > 6
+            }
+            return false                                            // no two paragraphs side by side to measure
+        }
         let lines = value.components(separatedBy: "\n")
+        // Chrome leaves blank lines out of the text it hands over, so check the box's own text for one between
+        let shown = displayText(el)
         var at = 0
         for k in 0..<max(0, lines.count - 1) {
             let a = lines[k] as NSString, b = lines[k + 1] as NSString
@@ -806,6 +822,7 @@ final class Controller: NSObject, NSMenuDelegate {
             guard a.length > 0, b.length > 0,
                   a.range(of: #"^([-*•]|\d+[.)])\s"#, options: .regularExpression).location == NSNotFound,
                   b.range(of: #"^([-*•]|\d+[.)])\s"#, options: .regularExpression).location == NSNotFound,
+                  !shown.contains(String((a as String).suffix(24)) + "\n\n" + String((b as String).prefix(24))),
                   let end = bounds(el, NSRange(location: next - 2, length: 1)),
                   let start = bounds(el, NSRange(location: next, length: 1)) else { continue }
             let gap = start.minY - end.maxY                         // screen positions run downward
@@ -856,9 +873,12 @@ final class Controller: NSObject, NSMenuDelegate {
         Self.key(0, .maskCommand)                                       // Command-A
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             let before = AX.string(el, kAXValueAttribute)
+            let boxNow = { AX.boxText(el, upTo: (AX.string(el, kAXValueAttribute) ?? "").utf16.count) ?? "" }
+            let shownBefore = boxNow()
             self.paste(t.plain(blankLines: !spaced), html: t.html(blankLines: !spaced)) {
-                // a whole message can take a moment to show up
-                Self.wait(until: { AX.string(el, kAXValueAttribute) != before && self.lineStartLive(el, first) }, tries: 100) { landed in
+                // a whole message can take a moment to show up. Chrome's text leaves blank lines out, so a change
+                // to blank lines alone shows only in the box's own text.
+                Self.wait(until: { (AX.string(el, kAXValueAttribute) != before || boxNow() != shownBefore) && self.lineStartLive(el, first) }, tries: 100) { landed in
                     if !landed {
                         // a box that turned the paste into something else (like an attachment) gets it undone
                         let changed = AX.string(el, kAXValueAttribute) != before
@@ -1064,8 +1084,10 @@ final class Controller: NSObject, NSMenuDelegate {
         let code = e.getIntegerValueField(.keyboardEventKeycode)
         let f = e.flags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift])
         if recordingShortcut { return false }
-        if Action.tidyUp.shortcut?.matches(e) == true && running && element != nil && tidy != nil {
-            DispatchQueue.main.async { self.applyTidy() }
+        // taken every time in a watched box, even with nothing to tidy, so a key like Option-` doesn't fall
+        // through and start an accent on the next letter
+        if Action.tidyUp.shortcut?.matches(e) == true && running && element != nil {
+            DispatchQueue.main.async { if self.tidy != nil { self.applyTidy() } }
             return true
         }
         if Action.fixAll.shortcut?.matches(e) == true && running && element != nil {
