@@ -755,6 +755,28 @@ final class Controller: NSObject, NSMenuDelegate {
         tidyCardOpen = true
     }
 
+    /// The box already puts space between paragraphs (like a web page does), so an empty line would look like two.
+    /// Measured on screen: from the end of one paragraph to the start of the next, more than half a line.
+    func paragraphsSpaced(_ el: AXUIElement) -> Bool {
+        let lines = value.components(separatedBy: "\n")
+        var at = 0
+        for k in 0..<max(0, lines.count - 1) {
+            let a = lines[k] as NSString, b = lines[k + 1] as NSString
+            let next = at + a.length + 1
+            defer { at = next }
+            // two paragraphs with text, neither a list item
+            guard a.length > 0, b.length > 0,
+                  a.range(of: #"^([-*•]|\d+[.)])\s"#, options: .regularExpression).location == NSNotFound,
+                  b.range(of: #"^([-*•]|\d+[.)])\s"#, options: .regularExpression).location == NSNotFound,
+                  let end = bounds(el, NSRange(location: next - 2, length: 1)),
+                  let start = bounds(el, NSRange(location: next, length: 1)) else { continue }
+            let gap = start.minY - end.maxY                         // screen positions run downward
+            log("paragraph gap \(gap) for line height \(end.height)")
+            return gap > end.height / 2
+        }
+        return false
+    }
+
     /// Where a line starts, by its first words, after a list marker the box may show in its text.
     func lineStart(of text: String) -> Int? {
         let want = text.split(separator: " ").prefix(4).joined(separator: " ").lowercased()
@@ -791,7 +813,16 @@ final class Controller: NSObject, NSMenuDelegate {
         }
         // 2. list markers, top down, numbered within each list
         func markers(_ k: Int, _ n: Int) {
-            guard k < t.lines.count else { return blanks(t.lines.count - 1) }
+            guard k < t.lines.count else {
+                refresh(el)
+                // a box that spaces its paragraphs and made a real list already sets the list apart; where the
+                // list is typed dashes, every line is spaced alike, so empty lines still group it
+                let hasList = t.lines.contains { $0.marker != nil }
+                if paragraphsSpaced(el) && (!hasList || AX.count(el, role: "AXList", depth: 6) > 0) {
+                    note("tidy: this box already spaces its paragraphs; no empty lines added"); return bolds(0)
+                }
+                return blanks(t.lines.count - 1)
+            }
             let line = t.lines[k]
             guard let m = line.marker else { return markers(k + 1, 0) }
             let number = m == "1. " ? n + 1 : 0
