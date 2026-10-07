@@ -46,7 +46,6 @@ final class Controller: NSObject, NSMenuDelegate {
     var tidyChecked: Set<String> = []          // messages already sent, with or without a tidy-up
     var tidyInflight: String?
     var tidyDismissed: Set<String> = []
-    var tidyCardOpen = false
     /// The tidy-up for the message as it is right now.
     var tidy: Tidy? { tidyOn && !tidyDismissed.contains(value as String) ? tidyCache[value as String] : nil }
     var axEnabled: Set<pid_t> = []
@@ -266,7 +265,6 @@ final class Controller: NSObject, NSMenuDelegate {
             shift(old: value, new: v)
             value = v
             showSaved()
-            if tidyCardOpen { hideCard() }
             lastChange = Date()
         }
         if Date().timeIntervalSince(lastChange) > 2 { sendChecks(el); sendTidyCheck(el) }
@@ -535,7 +533,7 @@ final class Controller: NSObject, NSMenuDelegate {
             badgeState = state
             badge.contentView = ClickThroughHostingView(rootView: BadgeView(count: count, checking: checking, tidy: tidyNow,
                                                                                fixAll: { [weak self] in self?.fixAll() },
-                                                                               tidyUp: { [weak self] in self?.showTidyCard() }))
+                                                                               tidyUp: { [weak self] in self?.applyTidy() }))
         }
         let size = badge.contentView!.fittingSize
         let screen = NSScreen.screens.first { $0.frame.intersects(frame) }?.visibleFrame ?? frame
@@ -588,7 +586,6 @@ final class Controller: NSObject, NSMenuDelegate {
         case "tab": if let id = hoverID { accept(id) }
         case "esc": if let id = hoverID { ignore(id) }
         case "fixall": fixAll()
-        case "tidy": showTidyCard()
         case "tidyreplace": applyTidy()
         case "translate": translateMenu()
         case "dump":
@@ -634,7 +631,6 @@ final class Controller: NSObject, NSMenuDelegate {
 
     func hideCard() {
         hoverID = nil
-        tidyCardOpen = false
         card.orderOut(nil)
     }
 
@@ -752,31 +748,6 @@ final class Controller: NSObject, NSMenuDelegate {
         }
     }
 
-    /// The card above the badge: what Claude would change, the message as it would look, and Replace.
-    func showTidyCard() {
-        guard let t = tidy else { return }
-        hideCard()
-        let rich = element.map { !AX.children($0).isEmpty } ?? false
-        let view = TidyCardView(tidy: t, warn: rich,
-                                replace: { [weak self] in self?.applyTidy() },
-                                ignore: { [weak self] in
-                                    guard let self else { return }
-                                    self.tidyDismissed.insert(self.value as String)
-                                    self.hideCard()
-                                    self.updateStatus()
-                                })
-        let host = ClickThroughHostingView(rootView: view)
-        let size = host.fittingSize
-        let anchor = badge.frame
-        let screen = NSScreen.screens.first { $0.frame.contains(anchor.origin) }?.visibleFrame ?? NSScreen.main!.visibleFrame
-        var origin = CGPoint(x: anchor.maxX - size.width, y: anchor.maxY + 8)
-        if origin.y + size.height > screen.maxY { origin.y = anchor.minY - 8 - size.height }
-        origin.x = min(max(origin.x, screen.minX + 6), screen.maxX - size.width - 6)
-        card.contentView = host
-        card.setFrame(CGRect(origin: origin, size: size), display: true)
-        card.orderFrontRegardless()
-        tidyCardOpen = true
-    }
 
     /// The box already puts space between paragraphs (like a web page does), so an empty line would look like two.
     /// Measured on screen: from the end of one paragraph to the start of the next, more than half a line.
@@ -794,10 +765,16 @@ final class Controller: NSObject, NSMenuDelegate {
                   let end = bounds(el, NSRange(location: next - 2, length: 1)),
                   let start = bounds(el, NSRange(location: next, length: 1)) else { continue }
             let gap = start.minY - end.maxY                         // screen positions run downward
-            log("paragraph gap \(gap) for line height \(end.height)")
+            note("tidy: paragraph gap \(Int(gap)) for line height \(Int(end.height))")
             return gap > end.height / 2
         }
         return false
+    }
+
+    /// The first line of the tidied text is in the box now.
+    func lineStartLive(_ el: AXUIElement, _ first: String) -> Bool {
+        let want = first.split(separator: " ").prefix(4).joined(separator: " ").lowercased()
+        return (AX.string(el, kAXValueAttribute) ?? "").lowercased().hasPrefix(want)
     }
 
     /// Where a line starts, by its first words, after a list marker the box may show in its text.
@@ -875,9 +852,12 @@ final class Controller: NSObject, NSMenuDelegate {
             guard line.blankBefore else { return blanks(k - 1) }
             refresh(el)
             let start = line.text.split(separator: " ").prefix(4).joined(separator: " ")
-            if displayText(el).range(of: "\n\n" + start, options: .caseInsensitive) != nil { return blanks(k - 1) }
-            guard let at = lineStart(of: line.text), at > 0 else { return blanks(k - 1) }
-            insert(el, over: NSRange(location: at, length: 0), "\n") { _ in blanks(k - 1) }
+            if displayText(el).range(of: "\n\n" + start, options: .caseInsensitive) != nil { note("tidy: line \(k + 1) already has a blank line above"); return blanks(k - 1) }
+            guard let at = lineStart(of: line.text), at > 0 else { note("tidy: line \(k + 1) not found for its blank line (\(start))"); return blanks(k - 1) }
+            insert(el, over: NSRange(location: at, length: 0), "\n") { ok in
+                note("tidy: blank line above line \(k + 1) at \(at): \(ok ? "added" : "didn't go in")")
+                blanks(k - 1)
+            }
         }
         // 4. bold, where the box keeps styles
         func bolds(_ k: Int) {
@@ -904,7 +884,8 @@ final class Controller: NSObject, NSMenuDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             let before = AX.string(el, kAXValueAttribute)
             self.paste(t.plain) {
-                Self.wait(until: { AX.string(el, kAXValueAttribute) != before }) { changed in
+                // a whole message can take a moment to show up
+                Self.wait(until: { AX.string(el, kAXValueAttribute) != before && self.lineStartLive(el, first) }, tries: 100) { changed in
                     self.refresh(el)
                     // a box that turned the paste into something else (like an attachment) gets it undone
                     guard changed, self.lineStart(of: first) != nil else {
@@ -999,7 +980,7 @@ final class Controller: NSObject, NSMenuDelegate {
         guard r.location >= 0, r.upperBound <= value.length, let map = boxMap(el) else { return done(false) }
         if r.length > 0, let at = AX.string(el, for: Self.toBox(r, map)), at != value.substring(with: r) { return done(false) }
         let go = { (ok: Bool) in
-            guard ok else { log("could not select for layout at \(r)"); return done(false) }
+            guard ok else { note("could not put the cursor at \(r.location) (box reports \(self.selection(el).map { "\($0)" } ?? "nil"))"); return done(false) }
             // an empty line doesn't show in the text Chrome hands over, only in the box's own text
             let live = { "\(AX.string(el, kAXValueAttribute) ?? "")\u{1}\(AX.boxText(el, upTo: (AX.string(el, kAXValueAttribute) ?? "").utf16.count) ?? "")" }
             let before = live()

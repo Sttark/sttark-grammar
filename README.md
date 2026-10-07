@@ -38,12 +38,12 @@ The app is also attached to each [release](https://github.com/Sttark/claude-gram
 
 ### Tidy up
 
-For a longer message, a purple **Tidy up** button shows next to the badge. Click it to see Claude's cleaned-up version of the whole message: paragraphs split, blank lines between them, things run together turned into a bulleted or numbered list, and spelling fixed. **Replace** swaps your message for it; **Ignore** hides it until you change the message.
+For a longer message, a purple **Tidy up** button shows next to the badge when Claude has a cleaner version: paragraphs split, blank lines between them, things run together turned into a bulleted or numbered list, and spelling fixed. One click swaps your message for it. Command-Z undoes it.
 
 - Claude gets the whole message once you pause, if it's at least 20 words or 3 lines. It keeps your meaning and only rewords what a list needs.
-- Replace pastes the new text over the whole message, then types "- " or "1. " at the start of each list item (rich boxes like the Claude app turn that into a real list) and adds blank lines one at a time. It never presses Return, which would send the message in the Claude app or Slack.
+- Tidying pastes the new text over the whole message, then types "- " or "1. " at the start of each list item (rich boxes like the Claude app turn that into a real list) and adds blank lines one at a time. It never presses Return, which would send the message in the Claude app or Slack.
 - In boxes that keep styles, the one or two details a reader must not miss are made bold. The Claude app's box has no bold.
-- In rich boxes like Slack and Asana, Replace turns links and @mentions into plain text. The card says so.
+- In rich boxes like Slack and Asana, tidying turns links and @mentions into plain text.
 - Turn it off with **Offer to tidy up** in the menu. It costs about one extra check each time you pause in a long message.
 
 ### Translate to Chinese
