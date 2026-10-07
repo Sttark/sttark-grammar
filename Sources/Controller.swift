@@ -41,11 +41,14 @@ final class Controller: NSObject, NSMenuDelegate {
     var lastError: String?
     var ignored: Set<String> = []
     var dictionary: Set<String> = []
-    // layout: paragraph splits, blank lines and lists for the whole message, found by text
-    var layoutIssues: [Issue] = []
-    var layoutCache: [String: [Issue]] = [:]   // whole message -> suggestions
-    var layoutInflight: String?
-    var allMarks: [Issue] { issues + layoutIssues }
+    // tidy up: Claude's cleaned-up copy of the whole message, offered as one change
+    var tidyCache: [String: Tidy] = [:]        // whole message -> its tidy-up
+    var tidyChecked: Set<String> = []          // messages already sent, with or without a tidy-up
+    var tidyInflight: String?
+    var tidyDismissed: Set<String> = []
+    var tidyCardOpen = false
+    /// The tidy-up for the message as it is right now.
+    var tidy: Tidy? { tidyOn && !tidyDismissed.contains(value as String) ? tidyCache[value as String] : nil }
     var axEnabled: Set<pid_t> = []
 
     // screen
@@ -81,9 +84,9 @@ final class Controller: NSObject, NSMenuDelegate {
         set { defaults.set(Array(newValue), forKey: "skipped") }
     }
     var running: Bool { enabled && (pausedUntil.map { $0 < Date() } ?? true) }
-    var layoutOn: Bool {
-        get { defaults.object(forKey: "layoutOn") as? Bool ?? true }
-        set { defaults.set(newValue, forKey: "layoutOn") }
+    var tidyOn: Bool {
+        get { defaults.object(forKey: "tidyOn") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "tidyOn") }
     }
 
     static let supportDir: URL = {
@@ -258,16 +261,15 @@ final class Controller: NSObject, NSMenuDelegate {
             log("focus \(appName) role=\(AX.string(el, kAXRoleAttribute) ?? "?") len=\(v.length) frame=\(AX.frame(el).map { "\($0)" } ?? "none")")
             value = v
             issues = issuesFromCache(v)
-            layoutIssues = savedLayout(v as String) ?? []
             lastChange = Date()
         } else if v != value {
             shift(old: value, new: v)
             value = v
             showSaved()
-            if let saved = savedLayout(v as String) { layoutIssues = saved }
+            if tidyCardOpen { hideCard() }
             lastChange = Date()
         }
-        if Date().timeIntervalSince(lastChange) > 2 { sendChecks(el); sendLayoutCheck(el) }
+        if Date().timeIntervalSince(lastChange) > 2 { sendChecks(el); sendTidyCheck(el) }
         layout(el)
         hover()
         updateStatus()
@@ -289,7 +291,6 @@ final class Controller: NSObject, NSMenuDelegate {
         guard element != nil || overlay.isVisible || badge.isVisible else { return }
         element = nil
         issues = []
-        layoutIssues = []
         rects = [:]
         overlay.orderOut(nil)
         badge.orderOut(nil)
@@ -469,14 +470,8 @@ final class Controller: NSObject, NSMenuDelegate {
         let frame = AX.toCocoa(axFrame)
         let visible = frame.insetBy(dx: -3, dy: -4)
         rects = [:]
-        // layout marks follow their text: find it again, and drop the ones whose text is gone
-        layoutIssues = layoutIssues.compactMap { i in
-            guard let marks = i.layout?.locate(in: value) else { return nil }
-            var c = i; c.range = marks[0]; return c
-        }
-        for i in allMarks where i.range.upperBound <= value.length {
-            let marks = i.layout?.locate(in: value) ?? [i.range]
-            let raw = marks.flatMap { lineRects(el, $0) }
+        for i in issues where i.range.upperBound <= value.length {
+            let raw = lineRects(el, i.range)
             let rs = raw.map(AX.toCocoa).filter { visible.intersects($0) }
             if !rs.isEmpty { rects[i.id] = rs }
             else if debug && !loggedMissing.contains(i.id) {
@@ -493,7 +488,7 @@ final class Controller: NSObject, NSMenuDelegate {
         } else {
             let win = visible.insetBy(dx: -2, dy: -2)
             if overlay.frame != win { overlay.setFrame(win, display: false) }
-            underlines.marks = allMarks.compactMap { i in
+            underlines.marks = issues.compactMap { i in
                 rects[i.id].map { rs in (rs.map { $0.offsetBy(dx: -win.minX, dy: -win.minY) }, i.kind.color, i.id == hoverID) }
             }
             overlay.orderFrontRegardless()
@@ -531,12 +526,15 @@ final class Controller: NSObject, NSMenuDelegate {
 
     func placeBadge(_ frame: CGRect) {
         let checking = paragraphs(value).contains { inflight.contains($0.1) }
-        let count = allMarks.count
-        guard count > 0 || checking else { badge.orderOut(nil); return }
-        let state = "\(count) \(checking)"
+        let count = issues.count
+        let tidyNow = tidy != nil
+        guard count > 0 || checking || tidyNow else { badge.orderOut(nil); return }
+        let state = "\(count) \(checking) \(tidyNow)"
         if state != badgeState || badge.contentView == nil {
             badgeState = state
-            badge.contentView = ClickThroughHostingView(rootView: BadgeView(count: count, checking: checking) { [weak self] in self?.fixAll() })
+            badge.contentView = ClickThroughHostingView(rootView: BadgeView(count: count, checking: checking, tidy: tidyNow,
+                                                                               fixAll: { [weak self] in self?.fixAll() },
+                                                                               tidyUp: { [weak self] in self?.showTidyCard() }))
         }
         let size = badge.contentView!.fittingSize
         let screen = NSScreen.screens.first { $0.frame.intersects(frame) }?.visibleFrame ?? frame
@@ -567,11 +565,13 @@ final class Controller: NSObject, NSMenuDelegate {
         case "tab": if let id = hoverID { accept(id) }
         case "esc": if let id = hoverID { ignore(id) }
         case "fixall": fixAll()
+        case "tidy": showTidyCard()
+        case "tidyreplace": applyTidy()
         case "translate": translateMenu()
         case "dump":
             log("value: \(value)")
-            for i in allMarks { log("  \(i.range) \(i.kind) \(i.original) -> \(i.suggestion) rects=\(rects[i.id] ?? [])") }
-            log("card \(card.isVisible ? "\(card.frame)" : "hidden") badge \(badge.isVisible ? "\(badge.frame)" : "hidden")")
+            for i in issues { log("  \(i.range) \(i.kind) \(i.original) -> \(i.suggestion) rects=\(rects[i.id] ?? [])") }
+            log("card \(card.isVisible ? "\(card.frame)" : "hidden") badge \(badge.isVisible ? "\(badge.frame)" : "hidden") tidy \(tidy.map { "\($0.lines.count) lines" } ?? "none")")
         default: break
         }
     }
@@ -582,7 +582,7 @@ final class Controller: NSObject, NSMenuDelegate {
         if card.isVisible && card.frame.insetBy(dx: -4, dy: -4).contains(m) { lastInside = Date(); return }
         // the badge can sit on top of an underlined word: over the badge, it's the badge, not the word
         if badge.isVisible && badge.frame.insetBy(dx: -2, dy: -2).contains(m) { if hoverID != nil { hideCard() }; return }
-        if let i = allMarks.first(where: { rects[$0.id]?.contains { $0.insetBy(dx: -1, dy: -4).contains(m) } ?? false }) {
+        if let i = issues.first(where: { rects[$0.id]?.contains { $0.insetBy(dx: -1, dy: -4).contains(m) } ?? false }) {
             lastInside = Date()
             if hoverID != i.id { showCard(i) }
             return
@@ -592,7 +592,7 @@ final class Controller: NSObject, NSMenuDelegate {
 
     func showCard(_ i: Issue) {
         hoverID = i.id
-        let view = CardView(issue: i, total: allMarks.filter(\.hasFix).count,
+        let view = CardView(issue: i, total: issues.filter(\.hasFix).count,
                             accept: { [weak self] in self?.accept(i.id) },
                             ignore: { [weak self] in self?.ignore(i.id) },
                             addWord: { [weak self] in self?.addToDictionary(i.id) },
@@ -611,22 +611,22 @@ final class Controller: NSObject, NSMenuDelegate {
 
     func hideCard() {
         hoverID = nil
+        tidyCardOpen = false
         card.orderOut(nil)
     }
 
     // MARK: actions
 
     func accept(_ id: UUID) {
-        guard let i = allMarks.first(where: { $0.id == id }) else { return }
+        guard let i = issues.first(where: { $0.id == id }) else { return }
         hideCard()
-        if i.layout != nil { applyLayouts([i]) } else { replace([i]) }
+        replace([i])
     }
 
     func ignore(_ id: UUID) {
-        guard let i = allMarks.first(where: { $0.id == id }) else { return }
+        guard let i = issues.first(where: { $0.id == id }) else { return }
         ignored.insert(i.ignoreKey)
         issues.removeAll { $0.id == id }
-        layoutIssues.removeAll { $0.id == id }
         hideCard()
     }
 
@@ -638,12 +638,10 @@ final class Controller: NSObject, NSMenuDelegate {
         hideCard()
     }
 
-    /// Wording first, then layout, since layout changes move lines around.
     func fixAll() {
-        note("fix all in \(appName): \(issues.filter(\.hasFix).count) fixes, \(layoutIssues.count) layout")
+        note("fix all in \(appName): \(issues.filter(\.hasFix).count) fixes")
         hideCard()
-        let layout = layoutIssues
-        replace(issues) { [weak self] in self?.applyLayouts(layout) }
+        replace(issues)
     }
 
     func fixParagraph() {
@@ -701,46 +699,171 @@ final class Controller: NSObject, NSMenuDelegate {
         next()
     }
 
-    // MARK: layout
-
-    func savedLayout(_ v: String) -> [Issue]? {
-        guard layoutOn, let saved = layoutCache[v] else { return nil }
-        return saved.filter { !ignored.contains($0.ignoreKey) }
-    }
+    // MARK: tidy up
 
     /// The whole message goes to Claude once you pause, if it's long enough to have a layout.
-    func sendLayoutCheck(_ el: AXUIElement) {
+    func sendTidyCheck(_ el: AXUIElement) {
         let key = value as String
-        guard layoutOn, layoutInflight == nil, layoutCache[key] == nil, value.length <= 8000 else { return }
+        guard tidyOn, tidyInflight == nil, !tidyChecked.contains(key), value.length <= 8000 else { return }
         let words = key.split(whereSeparator: \.isWhitespace).count
         let lines = key.split(separator: "\n").count
         guard words >= 20 || lines >= 3 else { return }
-        layoutInflight = key
+        tidyInflight = key
         let text = displayText(el)
-        note("layout check in \(appName) with \(model.rawValue): \(words) words, \(lines) lines, sent \(String(text.prefix(2000)).debugDescription)")
+        note("tidy check in \(appName) with \(model.rawValue): \(words) words, \(lines) lines, sent \(String(text.prefix(2000)).debugDescription)")
         let m = model
         Task {
             do {
-                let (found, inTokens, outTokens, raw) = try await LayoutChecker.check(text, model: m)
+                let (t, inTokens, outTokens, raw) = try await TidyChecker.check(text, model: m)
                 await MainActor.run {
-                    self.layoutInflight = nil
-                    self.layoutCache[key] = found
+                    self.tidyInflight = nil
+                    self.tidyChecked.insert(key)
+                    if let t { self.tidyCache[key] = t }
                     self.recordUsage(CheckResult(issues: [], inputTokens: inTokens, outputTokens: outTokens), model: m)
-                    note("layout got \(found.count): " + found.map { "\($0.layout!.change.rawValue) \($0.original)" }.joined(separator: "; ") + " | Claude said \(raw.prefix(1500))")
-                    // marks that can't be found in the text as it is now drop out on the next draw
-                    let canStyle = self.canStyle(el)
-                    let kept = found.filter { i in
-                        guard let l = i.layout, l.styling else { return true }
-                        return canStyle && !self.styleRuledOut(l.change)
-                    }
-                    self.layoutCache[key] = kept
-                    if self.layoutOn { self.layoutIssues = kept.filter { !self.ignored.contains($0.ignoreKey) } }
+                    note("tidy got \(t.map { "\($0.lines.count) lines, \($0.bold.count) bold" } ?? "nothing") | Claude said \(raw.prefix(1500))")
+                    self.updateStatus()
                 }
             } catch {
-                await MainActor.run { self.layoutInflight = nil; self.layoutCache[key] = []; log("layout error \(error)") }
+                await MainActor.run { self.tidyInflight = nil; self.tidyChecked.insert(key); note("tidy error \(error)") }
             }
         }
     }
+
+    /// The card above the badge: what Claude would change, the message as it would look, and Replace.
+    func showTidyCard() {
+        guard let t = tidy else { return }
+        hideCard()
+        let rich = element.map { !AX.children($0).isEmpty } ?? false
+        let view = TidyCardView(tidy: t, warn: rich,
+                                replace: { [weak self] in self?.applyTidy() },
+                                ignore: { [weak self] in
+                                    guard let self else { return }
+                                    self.tidyDismissed.insert(self.value as String)
+                                    self.hideCard()
+                                    self.updateStatus()
+                                })
+        let host = ClickThroughHostingView(rootView: view)
+        let size = host.fittingSize
+        let anchor = badge.frame
+        let screen = NSScreen.screens.first { $0.frame.contains(anchor.origin) }?.visibleFrame ?? NSScreen.main!.visibleFrame
+        var origin = CGPoint(x: anchor.maxX - size.width, y: anchor.maxY + 8)
+        if origin.y + size.height > screen.maxY { origin.y = anchor.minY - 8 - size.height }
+        origin.x = min(max(origin.x, screen.minX + 6), screen.maxX - size.width - 6)
+        card.contentView = host
+        card.setFrame(CGRect(origin: origin, size: size), display: true)
+        card.orderFrontRegardless()
+        tidyCardOpen = true
+    }
+
+    /// Where a line starts, by its first words, after a list marker the box may show in its text.
+    func lineStart(of text: String) -> Int? {
+        let want = text.split(separator: " ").prefix(4).joined(separator: " ").lowercased()
+        guard !want.isEmpty else { return nil }
+        var i = 0
+        while i <= value.length {
+            if i == 0 || value.character(at: i - 1) == 10 {
+                let body = value.substring(from: i).replacingOccurrences(of: #"^([-*•]|\d+[.)])\s+"#, with: "", options: .regularExpression)
+                if body.lowercased().hasPrefix(want) { return i }
+            }
+            let next = value.range(of: "\n", options: [], range: NSRange(location: i, length: value.length - i))
+            if next.location == NSNotFound { return nil }
+            i = next.upperBound
+        }
+        return nil
+    }
+
+    /// Replace swaps the whole message for the tidied lines in one paste, never pressing Return (it sends in
+    /// the Claude app and Slack). Then, the ways that work in every box tested: list markers typed at the start
+    /// of each item, which rich boxes turn into a real list; one pasted break at a line start for each blank
+    /// line; and bold by selecting the phrase and pressing Command-B.
+    func applyTidy() {
+        guard let el = element, let t = tidy, !editing else { return }
+        hideCard()
+        editing = true
+        note("tidy up in \(appName): \(t.lines.count) lines, \(t.lines.filter { $0.marker != nil }.count) list items, \(t.bold.count) bold")
+        let first = t.lines[0].text
+        func finish(_ ok: Bool) {
+            refresh(el)
+            lastChange = Date()
+            editing = false
+            note(ok ? "tidy up done" : "tidy up stopped partway")
+            updateStatus()
+        }
+        // 2. list markers, top down, numbered within each list
+        func markers(_ k: Int, _ n: Int) {
+            guard k < t.lines.count else { return blanks(t.lines.count - 1) }
+            let line = t.lines[k]
+            guard let m = line.marker else { return markers(k + 1, 0) }
+            let number = m == "1. " ? n + 1 : 0
+            let mark = m == "1. " ? "\(number). " : "- "
+            refresh(el)
+            guard let at = lineStart(of: line.text) else { note("tidy: list line \(k + 1) not found"); return markers(k + 1, number) }
+            func attempt(_ tries: Int) {
+                caret(el, at: at) { ok in
+                    guard ok else { note("tidy: no cursor at list line \(k + 1)"); return markers(k + 1, number) }
+                    let look = { "\(AX.string(el, kAXValueAttribute) ?? "")\u{1}\(AX.count(el, role: "AXListMarker", depth: 6))" }
+                    let was = look()
+                    Self.type(mark)
+                    Self.wait(until: { look() != was }) { changed in
+                        // keys that went nowhere changed nothing, so typing again can't double up
+                        if !changed && tries > 0 { return DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { attempt(tries - 1) } }
+                        if !changed { note("tidy: marker didn't go in on line \(k + 1)") }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { markers(k + 1, number) }
+                    }
+                }
+            }
+            attempt(1)
+        }
+        // 3. blank lines, bottom up so the spots above don't move
+        func blanks(_ k: Int) {
+            guard k > 0 else { return bolds(0) }
+            let line = t.lines[k]
+            guard line.blankBefore else { return blanks(k - 1) }
+            refresh(el)
+            let start = line.text.split(separator: " ").prefix(4).joined(separator: " ")
+            if displayText(el).range(of: "\n\n" + start, options: .caseInsensitive) != nil { return blanks(k - 1) }
+            guard let at = lineStart(of: line.text), at > 0 else { return blanks(k - 1) }
+            insert(el, over: NSRange(location: at, length: 0), "\n") { _ in blanks(k - 1) }
+        }
+        // 4. bold, where the box keeps styles
+        func bolds(_ k: Int) {
+            guard k < t.bold.count, canStyle(el), !styleRuledOut(.bold) else { return finish(true) }
+            refresh(el)
+            let r = value.range(of: t.bold[k])
+            guard r.location != NSNotFound else { return bolds(k + 1) }
+            let alone = styledAlone(el, t.bold[k])
+            select(el, r, expect: t.bold[k]) { ok in
+                guard ok else { return bolds(k + 1) }
+                Self.key(11, .maskCommand)                              // Command-B
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    if !(alone || self.styledAlone(el, t.bold[k]) || self.nativeStyled(el, r, .bold)) {
+                        self.noStyle.insert(self.styleKey(.bold))
+                        note("bold doesn't work in \(self.appName); won't try it here again")
+                    }
+                    self.select(el, NSRange(location: r.upperBound, length: 0))
+                    bolds(k + 1)
+                }
+            }
+        }
+        // 1. everything in the box, replaced by one paste
+        Self.key(0, .maskCommand)                                       // Command-A
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            let before = AX.string(el, kAXValueAttribute)
+            self.paste(t.plain) {
+                Self.wait(until: { AX.string(el, kAXValueAttribute) != before }) { changed in
+                    self.refresh(el)
+                    // a box that turned the paste into something else (like an attachment) gets it undone
+                    guard changed, self.lineStart(of: first) != nil else {
+                        note("tidy paste didn't land as text; undoing")
+                        if changed { Self.key(6, .maskCommand) }        // Command-Z
+                        return finish(false)
+                    }
+                    markers(0, 0)
+                }
+            }
+        }
+    }
+
 
     /// The message as you see it, blank lines included. Chrome-based apps leave blank lines out of the text
     /// they hand over, but their own count has one break per blank line and none for a plain line break.
@@ -766,166 +889,6 @@ final class Controller: NSObject, NSMenuDelegate {
         value = now
     }
 
-    /// Makes layout changes from the bottom up. Line breaks go in by pasting, never by pressing Return,
-    /// which sends the message in the Claude app and Slack.
-    func applyLayouts(_ list: [Issue], then: (() -> Void)? = nil) {
-        guard let el = element, !list.isEmpty, !editing else { then?(); return }
-        editing = true
-        refresh(el)
-        var todo = list.compactMap { i in i.layout?.locate(in: value).map { (i, $0[0].location) } }
-            .sorted { $0.1 > $1.1 }.map(\.0)
-        func next() {
-            guard !todo.isEmpty else {
-                refresh(el)
-                lastChange = Date()
-                editing = false
-                log("layout done")
-                updateStatus()
-                then?()
-                return
-            }
-            let i = todo.removeFirst()
-            applyLayout(el, i) { ok in
-                if ok {
-                    self.layoutIssues.removeAll { $0.id == i.id }
-                    // a style leaves the text the same, so don't bring the suggestion back from the saved results
-                    for k in self.layoutCache.keys { self.layoutCache[k]?.removeAll { $0.ignoreKey == i.ignoreKey } }
-                } else { note("layout didn't go in: \(i.suggestion.prefix(60))") }
-                next()
-            }
-        }
-        next()
-    }
-
-    func applyLayout(_ el: AXUIElement, _ i: Issue, done: @escaping (Bool) -> Void) {
-        refresh(el)
-        guard let l = i.layout, let marks = l.locate(in: value) else { return done(false) }
-        switch l.change {
-        case .split:
-            // the space before the sentence becomes a line break; if the message uses blank lines, add one too.
-            // Pasting two breaks at once gives one or two empty lines depending on the box, so it's two steps.
-            let blank = displayText(el).contains("\n\n")
-            let start = marks[0]
-            insert(el, over: NSRange(location: start.location - 1, length: 1), "\n") { ok in
-                guard ok, blank else { return done(ok) }
-                self.refresh(el)
-                // some boxes make a blank line from one pasted break already
-                let opening = l.at.last.map { String($0.prefix(20)) } ?? ""
-                if self.displayText(el).contains("\n\n" + opening) || l.at.contains(where: { self.displayText(el).contains("\n\n" + $0.prefix(20)) }) { return done(true) }
-                // the sentence now starts its own line, one place earlier than before
-                let line = NSRange(location: start.location - 1 + 1, length: 0)
-                guard line.location <= self.value.length, line.location > 0, self.value.character(at: line.location - 1) == 10 else { return done(true) }
-                self.insert(el, over: line, "\n") { _ in done(true) }
-            }
-        case .blankLine:
-            insert(el, over: NSRange(location: marks[0].location, length: 0), "\n", done: done)
-        case .bold, .underline:
-            let r = marks[0]
-            let phrase = value.substring(with: r)
-            // an earlier try in this box may have just found the style doesn't work: don't press it again
-            if styleRuledOut(l.change) { return done(false) }
-            let before = styledAlone(el, phrase)
-            select(el, r, expect: phrase) { ok in
-                guard ok else { return done(false) }
-                Self.key(l.change == .bold ? 11 : 32, .maskCommand)      // B, U
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                    // a style splits the phrase into its own piece of text; if it didn't, this app can't do it
-                    // (if it was already on its own there's no way to tell, so trust the shortcut)
-                    let took = before || self.styledAlone(el, phrase) || self.nativeStyled(el, r, l.change)
-                    if !took {
-                        self.noStyle.insert(self.styleKey(l.change))
-                        log("\(l.change.rawValue) doesn't work in \(self.appName); won't suggest it here again")
-                    }
-                    self.select(el, NSRange(location: r.upperBound, length: 0))
-                    done(took)
-                }
-            }
-        case .list:
-            // The sentence becomes the lead-in and one item per line, pasted in one go. The sentence gets its own
-            // lines: a break before it if text comes first on its line, and after it if text follows.
-            var r = marks[0]
-            var text = ([l.lead] + l.items).joined(separator: "\n")
-            if r.location > 0, value.character(at: r.location - 1) == 32 { r = NSRange(location: r.location - 1, length: r.length + 1); text = "\n" + text }
-            if r.upperBound < value.length, value.character(at: r.upperBound) == 32 { r.length += 1; text += "\n" }
-            insert(el, over: r, text) { ok in
-                guard ok else { return done(false) }
-                // then type the marker at the start of each item, top down: rich boxes like the Claude app turn
-                // "- " and "1. " into a real list as you type them, and plain boxes keep them as text
-                var k = 0
-                func step() {
-                    guard k < l.items.count else {
-                        guard self.listMade(el, l) else { return done(false) }
-                        return self.spaceAround(el, l) { done(true) }
-                    }
-                    self.refresh(el)
-                    let start = l.items[k].split(separator: " ").prefix(4).joined(separator: " ")
-                    guard let line = Layout(change: .blankLine, at: [start], numbered: false).locate(in: self.value)?.first else {
-                        log("list item \(k + 1) not found"); return done(k > 0)
-                    }
-                    let marker = l.numbered ? "\(k + 1). " : "- "
-                    func attempt(_ tries: Int) {
-                        self.caret(el, at: line.location) { ok in
-                            guard ok else { log("no cursor at list item \(k + 1)"); return done(k > 0) }
-                            // what the box looks like now: its text, its own text, and how many list markers it has
-                            let look = { "\(AX.string(el, kAXValueAttribute) ?? "")\u{1}\(AX.boxText(el, upTo: (AX.string(el, kAXValueAttribute) ?? "").utf16.count) ?? "")\u{1}\(AX.count(el, role: "AXListMarker", depth: 6))" }
-                            let before = look()
-                            let front = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
-                            let focus = AX.focused().map { "\(AX.string($0, kAXRoleAttribute) ?? "?") same box \(CFEqual($0, el))" } ?? "none"
-                            Self.type(marker)
-                            Self.wait(until: { look() != before }) { changed in
-                                note("list item \(k + 1)/\(l.items.count) typed \(marker.debugDescription): changed=\(changed) front=\(front) focus=\(focus) cursor=\(self.selection(el).map { "\($0.location)" } ?? "nil") line=\(line.location)")
-                                // keys that went nowhere changed nothing, so typing again can't double up
-                                if !changed && tries > 0 {
-                                    return DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { attempt(tries - 1) }
-                                }
-                                guard changed else { return done(false) }
-                                // let the box finish turning the line into a list item before moving on
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { k += 1; step() }
-                            }
-                        }
-                    }
-                    attempt(1)
-                }
-                step()
-            }
-        }
-    }
-
-    /// A blank line above the lead-in and below the last item, where text sits right against them. The lead-in
-    /// stays attached to its list.
-    func spaceAround(_ el: AXUIElement, _ l: Layout, done: @escaping () -> Void) {
-        func start(_ t: String) -> String { t.split(separator: " ").prefix(4).joined(separator: " ") }
-        func spaced(_ t: String) -> Bool { displayText(el).range(of: "\n\n" + t, options: .caseInsensitive) != nil }
-        // below first, so the spot above doesn't move
-        refresh(el)
-        var below: Int?
-        // the last item may start with its number in the box's text ("4. Tell the office"), so find it anywhere
-        let last = value.range(of: start(l.items.last!), options: [.caseInsensitive, .backwards])
-        if last.location != NSNotFound {
-            let end = value.range(of: "\n", options: [], range: NSRange(location: last.location, length: value.length - last.location))
-            if end.location != NSNotFound, end.upperBound < value.length, value.character(at: end.upperBound) != 10 { below = end.upperBound }
-        }
-        func above() {
-            refresh(el)
-            let lead = start(l.lead.trimmingCharacters(in: CharacterSet(charactersIn: ":")))
-            guard let at = Layout(change: .blankLine, at: [lead], numbered: false).locate(in: value)?.first, !spaced(lead) else { return done() }
-            insert(el, over: NSRange(location: at.location, length: 0), "\n") { _ in done() }
-        }
-        guard let b = below else { return above() }
-        let follower = start(value.substring(from: b).components(separatedBy: "\n")[0])
-        if follower.isEmpty || spaced(follower) { return above() }
-        insert(el, over: NSRange(location: b, length: 0), "\n") { _ in above() }
-    }
-
-    /// The list is there: as a real list in the box, or as typed markers in its text.
-    func listMade(_ el: AXUIElement, _ l: Layout) -> Bool {
-        refresh(el)
-        let first = l.items[0].split(separator: " ").prefix(4).joined(separator: " ")
-        let marker = l.numbered ? "1. " : "- "
-        if value.range(of: marker + first, options: .caseInsensitive).location != NSNotFound { return true }
-        return AX.count(el, role: "AXList") > 0
-    }
-
     /// Bold and underline need a box that keeps styles: a rich web box (its text comes in pieces), or a Mac
     /// text view whose text carries fonts. Never underline in Slack, where Command-U uploads a file.
     func canStyle(_ el: AXUIElement) -> Bool {
@@ -945,14 +908,14 @@ final class Controller: NSObject, NSMenuDelegate {
         set { defaults.set(Array(newValue), forKey: "noStyle") }
     }
     /// Ruled out for this kind of box, or for the whole app.
-    func styleRuledOut(_ c: Layout.Change) -> Bool {
+    func styleRuledOut(_ c: Style) -> Bool {
         let app = NSRunningApplication(processIdentifier: element.map(AX.pid) ?? 0)?.bundleIdentifier ?? appName
         return noStyle.contains(styleKey(c)) || noStyle.contains("\(app)/\(c.rawValue)")
     }
 
     /// Per app, and in a browser per kind of box (its page classes), so one site that can't underline doesn't
     /// turn it off for every site.
-    func styleKey(_ c: Layout.Change) -> String {
+    func styleKey(_ c: Style) -> String {
         let app = NSRunningApplication(processIdentifier: element.map(AX.pid) ?? 0)?.bundleIdentifier ?? appName
         let classes = (element.flatMap { AX.attr($0, "AXDOMClassList") } as? [String] ?? [])
             .filter { !$0.localizedCaseInsensitiveContains("focus") }.sorted().joined(separator: ".")
@@ -965,7 +928,7 @@ final class Controller: NSObject, NSMenuDelegate {
     }
 
     /// In a Mac text view: the font at the phrase is bold, or it's underlined.
-    func nativeStyled(_ el: AXUIElement, _ r: NSRange, _ c: Layout.Change) -> Bool {
+    func nativeStyled(_ el: AXUIElement, _ r: NSRange, _ c: Style) -> Bool {
         guard AX.children(el).isEmpty else { return false }
         var cf = CFRange(location: r.location, length: r.length); var v: AnyObject?
         guard let arg = AXValueCreate(.cfRange, &cf),
@@ -1174,7 +1137,7 @@ final class Controller: NSObject, NSMenuDelegate {
         }
         if code == 53 && f.isEmpty && translator.visible { DispatchQueue.main.async { self.translator.close() }; return true }
         guard let id = hoverID, f.isEmpty else { return false }
-        if code == 48, allMarks.first(where: { $0.id == id })?.hasFix == true { DispatchQueue.main.async { self.accept(id) }; return true }
+        if code == 48, issues.first(where: { $0.id == id })?.hasFix == true { DispatchQueue.main.async { self.accept(id) }; return true }
         if code == 53 { DispatchQueue.main.async { self.ignore(id) }; return true }
         return false
     }
@@ -1206,7 +1169,7 @@ final class Controller: NSObject, NSMenuDelegate {
         if b.image?.accessibilityDescription != symbol {
             b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: symbol)
         }
-        let t = running && !allMarks.isEmpty ? " \(allMarks.count)" : ""
+        let t = running && !issues.isEmpty ? " \(issues.count)" : ""
         if b.title != t { b.title = t; b.imagePosition = .imageLeading }
     }
 
@@ -1228,7 +1191,7 @@ final class Controller: NSObject, NSMenuDelegate {
         if Checker.apiKey == nil { item("Add your Anthropic API key…", #selector(askForKey)) }
         if let e = lastError { item("Last check failed: \(e)", nil) }
         item("On", #selector(toggleOn), on: enabled)
-        item("Suggest layout (paragraphs, lists)", #selector(toggleLayout), on: layoutOn)
+        item("Offer to tidy up (paragraphs, lists)", #selector(toggleTidy), on: tidyOn)
         let front = NSWorkspace.shared.frontmostApplication
         if let id = front?.bundleIdentifier, id != Bundle.main.bundleIdentifier {
             item("Skip in \(front?.localizedName ?? id)", #selector(toggleSkip(_:)), on: skipped.contains(id)).representedObject = id
@@ -1289,7 +1252,7 @@ final class Controller: NSObject, NSMenuDelegate {
         item("Quit", #selector(quit), key: "q", mods: .command)
     }
 
-    @objc func toggleLayout() { layoutOn.toggle(); if !layoutOn { layoutIssues = [] }; updateStatus() }
+    @objc func toggleTidy() { tidyOn.toggle(); if !tidyOn { hideCard() }; updateStatus() }
     @objc func toggleOn() { enabled.toggle(); if !enabled { reset() }; updateStatus() }
     @objc func pause() { pausedUntil = Date().addingTimeInterval(3600); reset(); updateStatus() }
     @objc func resume() { pausedUntil = nil; updateStatus() }

@@ -62,9 +62,7 @@ struct CardView: View {
             .padding(.horizontal, 14).padding(.top, 12)
 
             Group {
-                if issue.layout != nil {
-                    Text(issue.suggestion).font(.system(size: 14, weight: .semibold)).lineLimit(12).fixedSize(horizontal: false, vertical: true)
-                } else if issue.hasFix {
+                if issue.hasFix {
                     ViewThatFits(in: .horizontal) {
                         HStack(spacing: 10) { old; arrow; fix }
                         VStack(alignment: .leading, spacing: 6) { old; fix }
@@ -141,9 +139,25 @@ struct FootButton: View {
 struct BadgeView: View {
     let count: Int
     let checking: Bool
+    let tidy: Bool
     let fixAll: () -> Void
+    let tidyUp: () -> Void
 
     var body: some View {
+        HStack(spacing: 4) {
+            if tidy {
+                Button(action: tidyUp) {
+                    Text("Tidy up").font(.system(size: 11, weight: .medium)).foregroundStyle(.white)
+                        .padding(.horizontal, 9).frame(height: 24)
+                        .background(Capsule().fill(Color(nsColor: Kind.tidy.color)))
+                }.buttonStyle(.plain)
+            }
+            if count > 0 || checking || !tidy { fixButton }
+        }
+        .padding(3)
+    }
+
+    var fixButton: some View {
         Button(action: fixAll) {
             HStack(spacing: 5) {
                 if count > 0 {
@@ -160,6 +174,68 @@ struct BadgeView: View {
         }
         .buttonStyle(.plain)
         .disabled(count == 0)
-        .padding(3)
     }
 }
+
+// MARK: tidy-up card
+
+struct TidyCardView: View {
+    let tidy: Tidy
+    let warn: Bool
+    let replace: () -> Void
+    let ignore: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 7) {
+                Circle().fill(Color(nsColor: Kind.tidy.color)).frame(width: 8, height: 8)
+                Text("TIDY UP").font(.system(size: 11, weight: .semibold)).tracking(0.5).foregroundStyle(.secondary)
+                Spacer()
+                Text("Claude").font(.system(size: 10)).foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 14).padding(.top, 12)
+            if !tidy.summary.isEmpty {
+                Text(tidy.summary).font(.system(size: 12)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 14).padding(.top, 6)
+            }
+            ScrollView {
+                Text(previewText).font(.system(size: 13)).frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxHeight: 300)
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.05)))
+            .padding(.horizontal, 10).padding(.top, 10)
+            if warn {
+                Text("Replaces the whole message. Links and @mentions become plain text.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 14).padding(.top, 8)
+            }
+            Divider().padding(.top, 10)
+            HStack(spacing: 2) {
+                Button(action: replace) {
+                    Text("Replace").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(RoundedRectangle(cornerRadius: 5).fill(Color.accentColor))
+                }.buttonStyle(.plain)
+                FootButton(title: "Ignore", key: nil, action: ignore)
+                Spacer()
+            }
+            .padding(.horizontal, 8).padding(.vertical, 6)
+        }
+        .frame(width: 400)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 0.5))
+    }
+
+    /// Bold phrases shown bold.
+    var previewText: AttributedString {
+        var a = AttributedString(tidy.preview)
+        for b in tidy.bold {
+            if let r = a.range(of: b) { a[r].inlinePresentationIntent = .stronglyEmphasized }
+        }
+        return a
+    }
+}
+
