@@ -3,8 +3,22 @@ import SwiftUI
 
 let debug = ProcessInfo.processInfo.environment["CG_DEBUG"] != nil
 let started = Date()
+/// Fixes and layout changes also go to ~/Library/Logs/ClaudeGrammar.log, so a run that went wrong can be read
+/// afterward. The file starts over past 1 MB.
+let logFile: FileHandle? = {
+    let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/ClaudeGrammar.log")
+    if let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int, size > 1_000_000 { try? FileManager.default.removeItem(at: url) }
+    if !FileManager.default.fileExists(atPath: url.path) { FileManager.default.createFile(atPath: url.path, contents: nil) }
+    let h = try? FileHandle(forWritingTo: url); _ = try? h?.seekToEnd(); return h
+}()
 func log(_ s: @autoclosure () -> String) {
     if debug { FileHandle.standardError.write((String(format: "%7.3f ", Date().timeIntervalSince(started)) + s() + "\n").data(using: .utf8)!) }
+}
+/// Always written, to the log file: what fixes and layout changes did.
+func note(_ s: String) {
+    log(s)
+    let f = DateFormatter(); f.dateFormat = "MM-dd HH:mm:ss.SSS"
+    logFile?.write((f.string(from: Date()) + " " + s + "\n").data(using: .utf8)!)
 }
 
 final class Controller: NSObject, NSMenuDelegate {
@@ -626,7 +640,7 @@ final class Controller: NSObject, NSMenuDelegate {
 
     /// Wording first, then layout, since layout changes move lines around.
     func fixAll() {
-        log("fix all: \(issues.filter(\.hasFix).count) fixes, \(layoutIssues.count) layout")
+        note("fix all in \(appName): \(issues.filter(\.hasFix).count) fixes, \(layoutIssues.count) layout")
         hideCard()
         let layout = layoutIssues
         replace(issues) { [weak self] in self?.applyLayouts(layout) }
@@ -680,7 +694,7 @@ final class Controller: NSObject, NSMenuDelegate {
             guard let (i, ids) = todo.first else { finish(); return }
             todo.removeFirst()
             replaceOne(el, i) { ok in
-                if !ok { failed.formUnion(ids); log("fix '\(i.original)' -> '\(i.suggestion)' didn't go in") }
+                if !ok { failed.formUnion(ids); note("fix '\(i.original)' -> '\(i.suggestion)' didn't go in") }
                 next()
             }
         }
@@ -700,10 +714,10 @@ final class Controller: NSObject, NSMenuDelegate {
         guard layoutOn, layoutInflight == nil, layoutCache[key] == nil, value.length <= 8000 else { return }
         let words = key.split(whereSeparator: \.isWhitespace).count
         let lines = key.split(separator: "\n").count
-        guard words >= 40 || lines >= 3 else { return }
+        guard words >= 20 || lines >= 3 else { return }
         layoutInflight = key
         let text = displayText(el)
-        log("layout check \(words) words, \(lines) lines")
+        note("layout check in \(appName): \(words) words, \(lines) lines")
         let m = model
         Task {
             do {
@@ -712,7 +726,7 @@ final class Controller: NSObject, NSMenuDelegate {
                     self.layoutInflight = nil
                     self.layoutCache[key] = found
                     self.recordUsage(CheckResult(issues: [], inputTokens: inTokens, outputTokens: outTokens), model: m)
-                    log("layout got \(found.count): " + found.map { "\($0.layout!.change.rawValue) \($0.original)" }.joined(separator: "; "))
+                    note("layout got \(found.count): " + found.map { "\($0.layout!.change.rawValue) \($0.original)" }.joined(separator: "; "))
                     // marks that can't be found in the text as it is now drop out on the next draw
                     let canStyle = self.canStyle(el)
                     let kept = found.filter { i in
@@ -776,7 +790,7 @@ final class Controller: NSObject, NSMenuDelegate {
                     self.layoutIssues.removeAll { $0.id == i.id }
                     // a style leaves the text the same, so don't bring the suggestion back from the saved results
                     for k in self.layoutCache.keys { self.layoutCache[k]?.removeAll { $0.ignoreKey == i.ignoreKey } }
-                } else { log("layout '\(i.suggestion)' didn't go in") }
+                } else { note("layout didn't go in: \(i.suggestion.prefix(60))") }
                 next()
             }
         }
@@ -855,13 +869,18 @@ final class Controller: NSObject, NSMenuDelegate {
                             // what the box looks like now: its text, its own text, and how many list markers it has
                             let look = { "\(AX.string(el, kAXValueAttribute) ?? "")\u{1}\(AX.boxText(el, upTo: (AX.string(el, kAXValueAttribute) ?? "").utf16.count) ?? "")\u{1}\(AX.count(el, role: "AXListMarker", depth: 6))" }
                             let before = look()
+                            let front = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
+                            let focus = AX.focused().map { "\(AX.string($0, kAXRoleAttribute) ?? "?") same box \(CFEqual($0, el))" } ?? "none"
                             Self.type(marker)
                             Self.wait(until: { look() != before }) { changed in
-                                log("list item \(k + 1) typed \(marker.debugDescription): changed=\(changed)")
+                                note("list item \(k + 1)/\(l.items.count) typed \(marker.debugDescription): changed=\(changed) front=\(front) focus=\(focus) cursor=\(self.selection(el).map { "\($0.location)" } ?? "nil") line=\(line.location)")
                                 // keys that went nowhere changed nothing, so typing again can't double up
-                                if !changed && tries > 0 { return attempt(tries - 1) }
+                                if !changed && tries > 0 {
+                                    return DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { attempt(tries - 1) }
+                                }
                                 guard changed else { return done(false) }
-                                k += 1; step()
+                                // let the box finish turning the line into a list item before moving on
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { k += 1; step() }
                             }
                         }
                     }
