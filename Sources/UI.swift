@@ -136,7 +136,7 @@ struct FootButton: View {
 
 // MARK: corner badge
 
-/// The one small round dot (16 px) in the box's corner, like Grammarly's: gray and spinning while checking, red with the
+/// The one small round dot (12 px) in the box's corner, like Grammarly's: gray and spinning while checking, red with the
 /// number of word fixes, purple when there's a tidy-up, red with a purple corner when there are both.
 struct DotView: View {
     let count: Int
@@ -147,20 +147,18 @@ struct DotView: View {
     var body: some View {
         Button(action: click) {
             ZStack(alignment: .topTrailing) {
-                Circle().fill(fill).frame(width: 16, height: 16)
+                Circle().fill(fill).frame(width: 12, height: 12)
                     .overlay {
                         if count > 0 {
-                            Text(count > 99 ? "99+" : "\(count)").font(.system(size: count > 9 ? 7 : 9, weight: .bold)).foregroundStyle(.white)
+                            Text(count > 99 ? "99+" : "\(count)").font(.system(size: count > 9 ? 5.5 : 7.5, weight: .bold)).foregroundStyle(.white)
                         } else if tidy {
-                            Image(systemName: "wand.and.stars").font(.system(size: 8, weight: .semibold)).foregroundStyle(.white)
+                            Image(systemName: "wand.and.stars").font(.system(size: 6, weight: .bold)).foregroundStyle(.white)
                         } else {
-                            ProgressView().controlSize(.mini).tint(.white).scaleEffect(0.5)
+                            Spinner()
                         }
                     }
-                    .shadow(color: .black.opacity(0.25), radius: 1.5, y: 0.5)
                 if count > 0 && tidy {
-                    Circle().fill(Color(nsColor: Kind.tidy.color)).frame(width: 7, height: 7)
-                        .overlay(Circle().stroke(Color.white, lineWidth: 1)).offset(x: 2, y: -2)
+                    Circle().fill(Color(nsColor: Kind.tidy.color)).frame(width: 5, height: 5).offset(x: 1.5, y: -1.5)
                 }
             }
         }
@@ -172,6 +170,17 @@ struct DotView: View {
         if count > 0 { return Color(nsColor: Kind.spelling.color) }
         if tidy { return Color(nsColor: Kind.tidy.color) }
         return Color.gray.opacity(0.85)
+    }
+}
+
+/// A small white arc that turns, for a dot too small for the system spinner.
+struct Spinner: View {
+    var body: some View {
+        TimelineView(.animation) { ctx in
+            Circle().trim(from: 0, to: 0.7).stroke(Color.white, style: StrokeStyle(lineWidth: 1.4, lineCap: .round))
+                .frame(width: 6.5, height: 6.5)
+                .rotationEffect(.degrees(ctx.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 0.9) / 0.9 * 360))
+        }
     }
 }
 

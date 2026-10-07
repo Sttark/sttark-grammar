@@ -33,7 +33,7 @@ The app is also attached to each [release](https://github.com/Sttark/claude-gram
 - Hover an underline to see the fix. Click the blue fix, or press **Tab**, to take it. **Esc** ignores it.
 - **Add to dictionary** stops a word from being flagged. Use it for names and jargon.
 - Web addresses, email addresses and file paths are never flagged.
-- A small dot sits in the corner of the text box, away from your text: gray and spinning while it checks, red with the number of mistakes, purple when there's a tidy-up, red with a purple corner when there are both. Hover it for a card with **Fix all** and **Tidy up**, one click each. Click the dot to keep the card open; Esc or a click anywhere else closes it.
+- A small 12-pixel dot sits in the corner of the text box, away from your text: gray and spinning while it checks, red with the number of mistakes, purple when there's a tidy-up, red with a purple corner when there are both. Hover it for a card with **Fix all** and **Tidy up**, one click each. Click the dot to keep the card open; Esc or a click anywhere else closes it.
 - **Control-Option-F** fixes everything (Fix all), and **Control-Option-T** tidies up when the dot is purple. You can change both (see Shortcuts).
 
 ### Tidy up

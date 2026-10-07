@@ -56,7 +56,10 @@ final class Controller: NSObject, NSMenuDelegate {
     let overlay = makePanel(mouse: false)
     let underlines = UnderlineView()
     let card = makePanel(mouse: true)
-    let badge = makePanel(mouse: true)
+    let badge: NSPanel = {
+        // no window shadow: around a small round dot on a see-through window it draws a jagged dark edge
+        let p = makePanel(mouse: true); p.hasShadow = false; return p
+    }()
     var rects: [UUID: [CGRect]] = [:]           // screen rects of each issue, AppKit coordinates
     var hoverID: UUID?
     var lastInside = Date.distantPast
