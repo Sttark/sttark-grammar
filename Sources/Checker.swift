@@ -422,6 +422,26 @@ enum Diff {
         return (NSRange(location: lo, length: hi - lo), String(utf16CodeUnits: mid, count: mid.count))
     }
 
+    /// A name from the dictionary (like Sttark) written another way ("sttark") gets the name's own case. Not
+    /// inside an address like sttark.com.
+    static func nameIssues(_ text: String, names: [String], besides claude: [Issue]) -> [Issue] {
+        let ns = text as NSString
+        let links = links(in: text)
+        var out: [Issue] = []
+        for name in names {
+            let pattern = "(?<![\\p{L}\\p{N}])" + NSRegularExpression.escapedPattern(for: name) + "(?![\\p{L}\\p{N}])"
+            guard let re = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { continue }
+            for m in re.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+                let r = m.range, found = ns.substring(with: r)
+                if found == name || (found.count > 1 && found == found.uppercased()) { continue }    // all caps is on purpose
+                if links.contains(where: { NSIntersectionRange($0, r).length > 0 }) { continue }
+                if (claude + out).contains(where: { NSIntersectionRange($0.range, r).length > 0 }) { continue }
+                out.append(Issue(range: r, original: found, suggestion: name, kind: .capitals, reason: "\(name) is a name."))
+            }
+        }
+        return out
+    }
+
     /// Words a sentence can't end on, so text ending on one is still being typed.
     static let unfinished: Set<String> = ["a", "an", "the", "to", "and", "or", "but", "nor", "of", "for", "with", "in", "on", "at",
         "from", "by", "into", "onto", "about", "as", "so", "because", "than", "that", "which", "who", "whose", "if", "when",
