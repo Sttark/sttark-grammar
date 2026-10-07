@@ -1059,9 +1059,12 @@ final class Controller: NSObject, NSMenuDelegate {
     }
 
     /// Try the Accessibility API first; apps that ignore it get the fix pasted over a selection.
-    func replaceOne(_ el: AXUIElement, _ i: Issue, done: @escaping (Bool) -> Void) {
+    func replaceOne(_ el: AXUIElement, _ whole: Issue, done: @escaping (Bool) -> Void) {
         guard let cur = AX.string(el, kAXValueAttribute) as NSString?,
-              i.range.upperBound <= cur.length, cur.substring(with: i.range) == i.original else { done(false); return }
+              whole.range.upperBound <= cur.length, cur.substring(with: whole.range) == whole.original else { done(false); return }
+        // replace only the part that changes, never starting or ending with a space
+        let (r, fix) = Diff.tighten(whole.range, whole.suggestion, in: cur)
+        let i = Issue(range: r, original: cur.substring(with: r), suggestion: fix, kind: whole.kind, reason: whole.reason)
         let expected = cur.replacingCharacters(in: i.range, with: i.suggestion)
         // never type over text that isn't the flagged word
         guard let map = boxMap(el) else { done(false); return }
