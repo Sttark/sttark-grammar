@@ -843,16 +843,23 @@ final class Controller: NSObject, NSMenuDelegate {
                         log("list item \(k + 1) not found"); return done(k > 0)
                     }
                     let marker = l.numbered ? "\(k + 1). " : "- "
-                    self.caret(el, at: line.location) { ok in
-                        guard ok else { log("no cursor at list item \(k + 1)"); return done(k > 0) }
-                        let before = AX.string(el, kAXValueAttribute)
-                        let lists = AX.count(el, role: "AXList")
-                        Self.type(marker)
-                        // a plain box shows the marker in its text; a rich box may only grow a list
-                        Self.wait(until: { AX.string(el, kAXValueAttribute) != before || AX.count(el, role: "AXList") != lists }) { _ in
-                            k += 1; step()
+                    func attempt(_ tries: Int) {
+                        self.caret(el, at: line.location) { ok in
+                            guard ok else { log("no cursor at list item \(k + 1)"); return done(k > 0) }
+                            // what the box looks like now: its text, its own text, and how many list markers it has
+                            let look = { "\(AX.string(el, kAXValueAttribute) ?? "")\u{1}\(AX.boxText(el, upTo: (AX.string(el, kAXValueAttribute) ?? "").utf16.count) ?? "")\u{1}\(AX.count(el, role: "AXListMarker", depth: 6))" }
+                            let before = look()
+                            Self.type(marker)
+                            Self.wait(until: { look() != before }) { changed in
+                                log("list item \(k + 1) typed \(marker.debugDescription): changed=\(changed)")
+                                // keys that went nowhere changed nothing, so typing again can't double up
+                                if !changed && tries > 0 { return attempt(tries - 1) }
+                                guard changed else { return done(false) }
+                                k += 1; step()
+                            }
                         }
                     }
+                    attempt(1)
                 }
                 step()
             }
