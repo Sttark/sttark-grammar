@@ -717,16 +717,16 @@ final class Controller: NSObject, NSMenuDelegate {
         guard words >= 20 || lines >= 3 else { return }
         layoutInflight = key
         let text = displayText(el)
-        note("layout check in \(appName): \(words) words, \(lines) lines")
+        note("layout check in \(appName) with \(model.rawValue): \(words) words, \(lines) lines, sent \(String(text.prefix(2000)).debugDescription)")
         let m = model
         Task {
             do {
-                let (found, inTokens, outTokens) = try await LayoutChecker.check(text, model: m)
+                let (found, inTokens, outTokens, raw) = try await LayoutChecker.check(text, model: m)
                 await MainActor.run {
                     self.layoutInflight = nil
                     self.layoutCache[key] = found
                     self.recordUsage(CheckResult(issues: [], inputTokens: inTokens, outputTokens: outTokens), model: m)
-                    note("layout got \(found.count): " + found.map { "\($0.layout!.change.rawValue) \($0.original)" }.joined(separator: "; "))
+                    note("layout got \(found.count): " + found.map { "\($0.layout!.change.rawValue) \($0.original)" }.joined(separator: "; ") + " | Claude said \(raw.prefix(1500))")
                     // marks that can't be found in the text as it is now drop out on the next draw
                     let canStyle = self.canStyle(el)
                     let kept = found.filter { i in

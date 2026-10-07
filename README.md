@@ -89,7 +89,7 @@ Terminal, iTerm2, Ghostty, Warp, 1Password and Keychain Access are skipped from 
 
 ## Cost and privacy
 
-The app keeps a log of what its fixes and layout changes did at `~/Library/Logs/ClaudeGrammar.log`, so a fix that went wrong can be traced. It holds short pieces of the text being fixed, stays on your Mac, and starts over past 1 MB.
+The app keeps a log of what its fixes and layout changes did at `~/Library/Logs/ClaudeGrammar.log`, so a fix that went wrong can be traced. It holds the text sent for each layout check and short pieces of the text being fixed, stays on your Mac, and starts over past 1 MB.
 
 Each paragraph you write is sent to Claude through Anthropic's API, billed to your API key. With the default model (Claude Haiku 4.5), one check costs about $0.003. A heavy day of typing comes to around 30 to 50 cents. The menu shows today's total.
 

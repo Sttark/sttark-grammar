@@ -284,7 +284,8 @@ enum LayoutChecker {
         ],
     ]
 
-    static func check(_ text: String, model: Model) async throws -> ([Issue], Int, Int) {
+    /// Also returns Claude's answer as it came, for the log.
+    static func check(_ text: String, model: Model) async throws -> ([Issue], Int, Int, String) {
         let (reply, inTokens, outTokens) = try await Checker.ask(system: system, schema: schema, text: text, model: model)
         let found = (reply["suggestions"] as? [[String: Any]] ?? []).compactMap { d -> Issue? in
             let c = Layout.Change(rawValue: d["change"] as? String ?? "")
@@ -305,7 +306,8 @@ enum LayoutChecker {
                          kind: .layout, reason: d["reason"] as? String ?? "", layout: l)
         }
         let blanks = blankLines(text).filter { b in !found.contains { $0.layout?.at.first == b.layout?.at.first } }
-        return (found + blanks, inTokens, outTokens)
+        let raw = (try? JSONSerialization.data(withJSONObject: reply)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        return (found + blanks, inTokens, outTokens, raw)
     }
 
     /// Claude never suggests these, so the app finds them: three or more lines in a row that are each a
