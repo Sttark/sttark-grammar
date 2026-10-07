@@ -62,7 +62,9 @@ struct CardView: View {
             .padding(.horizontal, 14).padding(.top, 12)
 
             Group {
-                if issue.hasFix {
+                if issue.layout != nil {
+                    Text(issue.suggestion).font(.system(size: 15, weight: .semibold)).lineLimit(2)
+                } else if issue.hasFix {
                     ViewThatFits(in: .horizontal) {
                         HStack(spacing: 10) { old; arrow; fix }
                         VStack(alignment: .leading, spacing: 6) { old; fix }

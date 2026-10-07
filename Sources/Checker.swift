@@ -2,13 +2,14 @@ import AppKit
 import Security
 
 enum Kind: String {
-    case spelling, grammar, capitals
+    case spelling, grammar, capitals, layout
 
     var label: String {
         switch self {
         case .spelling: return "Spelling"
         case .grammar: return "Grammar"
         case .capitals: return "Capitals"
+        case .layout: return "Layout"
         }
     }
 
@@ -17,6 +18,7 @@ enum Kind: String {
         case .spelling: return NSColor(srgbRed: 0.90, green: 0.28, blue: 0.30, alpha: 1)
         case .grammar: return NSColor(srgbRed: 0.94, green: 0.63, blue: 0.13, alpha: 1)
         case .capitals: return NSColor(srgbRed: 0.24, green: 0.48, blue: 0.98, alpha: 1)
+        case .layout: return NSColor(srgbRed: 0.64, green: 0.38, blue: 0.92, alpha: 1)
         }
     }
 }
@@ -28,6 +30,7 @@ struct Issue {
     let suggestion: String
     let kind: Kind
     let reason: String
+    var layout: Layout? = nil
 
     var ignoreKey: String { original + "\u{1}" + suggestion }
     var hasFix: Bool { original != suggestion }
@@ -47,6 +50,60 @@ enum Model: String, CaseIterable {
     var label: String { self == .sonnet ? "Sonnet 5 (slower, twice the cost)" : "Haiku 4.5 (fast)" }
     // dollars per million tokens, input and output
     var price: (Double, Double) { self == .sonnet ? (2, 10) : (1, 5) }
+}
+
+/// A change to how a message is laid out, found by the text it applies to so it survives typing elsewhere.
+struct Layout {
+    enum Change: String { case split, blankLine = "blank_line", list }
+    let change: Change
+    let at: [String]            // the start of the sentence or line; for a list, of every line
+    let numbered: Bool
+
+    var label: String {
+        switch change {
+        case .split: return "Start a new paragraph here"
+        case .blankLine: return "Add a blank line above this line"
+        case .list: return "Make these \(at.count) lines a \(numbered ? "numbered" : "bulleted") list"
+        }
+    }
+
+    /// Where each mark goes: the first word of the sentence or line. nil once the text no longer matches.
+    func locate(in v: NSString) -> [NSRange]? {
+        func starts(_ t: String) -> [Int] {
+            var out: [Int] = [], from = 0
+            while from < v.length {
+                let r = v.range(of: t, options: [.caseInsensitive], range: NSRange(location: from, length: v.length - from))
+                guard r.location != NSNotFound else { break }
+                out.append(r.location); from = r.location + 1
+            }
+            return out
+        }
+        func lineStart(_ i: Int) -> Bool { i == 0 || v.character(at: i - 1) == 10 }
+        func word(_ i: Int) -> NSRange {
+            var j = i
+            while j < v.length && Diff.isWordChar(v.character(at: j)) { j += 1 }
+            return NSRange(location: i, length: max(1, j - i))
+        }
+        guard let first = at.first, !first.isEmpty else { return nil }
+        switch change {
+        case .split:
+            // mid-line, after a space; Claude sometimes quotes the sentence before it too, so try each
+            for t in at {
+                if let i = starts(t).first(where: { $0 > 1 && v.character(at: $0 - 1) == 32 && !lineStart($0) }) { return [word(i)] }
+            }
+            return nil
+        case .blankLine:
+            guard let i = starts(first).first(where: { $0 > 0 && lineStart($0) }) else { return nil }
+            return [word(i)]
+        case .list:
+            var out: [NSRange] = [], after = -1
+            for t in at {
+                guard let i = starts(t).first(where: { $0 > after && lineStart($0) }) else { return nil }
+                out.append(word(i)); after = i
+            }
+            return out
+        }
+    }
 }
 
 struct CheckResult {
@@ -123,12 +180,27 @@ enum Checker {
     }
 
     static func check(_ text: String, model: Model, words: [String] = []) async throws -> CheckResult {
+        let sys = words.isEmpty ? system : system + "\nThe user's dictionary. These are spelled right, never change them: " + words.prefix(500).joined(separator: ", ")
+        let (reply, inTokens, outTokens) = try await ask(system: sys, schema: schema, text: text, model: model)
+        guard let corrected = reply["corrected"] as? String else { throw CheckError.badReply("no corrected copy") }
+        let notes = (reply["issues"] as? [[String: Any]] ?? []).compactMap { d -> (String, String, Kind, String)? in
+            guard let o = d["original"] as? String, let s = d["suggestion"] as? String,
+                  let k = Kind(rawValue: d["kind"] as? String ?? ""), let r = d["reason"] as? String else { return nil }
+            return (o, s, k, r)
+        }
+        var issues = Diff.issues(original: text, corrected: corrected, notes: notes)
+        issues += Diff.unknownWords(text, notes: notes, besides: issues)
+        return CheckResult(issues: issues.sorted { $0.range.location < $1.range.location }, inputTokens: inTokens, outputTokens: outTokens)
+    }
+
+    /// One request to Claude with a JSON reply. Returns the reply and the tokens used.
+    static func ask(system: String, schema: [String: Any], text: String, model: Model) async throws -> ([String: Any], Int, Int) {
         guard let key = apiKey else { throw CheckError.noKey }
         var outputConfig: [String: Any] = ["format": ["type": "json_schema", "schema": schema]]
         var body: [String: Any] = [
             "model": model.rawValue,
             "max_tokens": 8000,
-            "system": words.isEmpty ? system : system + "\nThe user's dictionary. These are spelled right, never change them: " + words.prefix(500).joined(separator: ", "),
+            "system": system,
             "messages": [["role": "user", "content": "<text>\n\(text)\n</text>"]],
         ]
         if model == .sonnet {
@@ -155,21 +227,80 @@ enum Checker {
         guard json["stop_reason"] as? String == "end_turn",
               let blocks = json["content"] as? [[String: Any]],
               let txt = blocks.first(where: { $0["type"] as? String == "text" })?["text"] as? String,
-              let reply = (try? JSONSerialization.jsonObject(with: Data(txt.utf8))) as? [String: Any],
-              let corrected = reply["corrected"] as? String else {
+              let reply = (try? JSONSerialization.jsonObject(with: Data(txt.utf8))) as? [String: Any] else {
             throw CheckError.badReply("stop_reason \(json["stop_reason"] ?? "none")")
         }
-        let notes = (reply["issues"] as? [[String: Any]] ?? []).compactMap { d -> (String, String, Kind, String)? in
-            guard let o = d["original"] as? String, let s = d["suggestion"] as? String,
-                  let k = Kind(rawValue: d["kind"] as? String ?? ""), let r = d["reason"] as? String else { return nil }
-            return (o, s, k, r)
-        }
         let usage = json["usage"] as? [String: Any] ?? [:]
-        var issues = Diff.issues(original: text, corrected: corrected, notes: notes)
-        issues += Diff.unknownWords(text, notes: notes, besides: issues)
-        return CheckResult(issues: issues.sorted { $0.range.location < $1.range.location },
-                           inputTokens: usage["input_tokens"] as? Int ?? 0,
-                           outputTokens: usage["output_tokens"] as? Int ?? 0)
+        return (reply, usage["input_tokens"] as? Int ?? 0, usage["output_tokens"] as? Int ?? 0)
+    }
+}
+
+/// A second check on the whole message: paragraph splits, blank lines and lists. Never wording.
+enum LayoutChecker {
+    static let system = """
+    You look at the layout of a message the user is typing in another app, never its wording. Each line break in the text is a real line break, and an empty line is a blank line.
+    Suggest a change only when it clearly makes the message easier to read. Most messages need nothing, so an empty list is the usual answer.
+    - "split": a paragraph that runs two separate points together, or a long paragraph (about 80 words or more) with a clear turn in it. "at" is the sentence that should start the new paragraph.
+    - "list": three or more lines in a row that are parallel items, like steps, options or things to do, and aren't a list already. "at" is every line, in order. Set "numbered" when the order matters.
+    Never suggest anything for a message under three sentences.
+    In "at", copy the first six or so words of each sentence or line exactly as typed, enough to find it. "reason" is at most 10 plain words.
+    """
+
+    static let schema: [String: Any] = [
+        "type": "object", "additionalProperties": false, "required": ["suggestions"],
+        "properties": [
+            "suggestions": ["type": "array", "items": [
+                "type": "object", "additionalProperties": false,
+                "required": ["change", "at", "numbered", "reason"],
+                "properties": [
+                    "change": ["type": "string", "enum": ["split", "list"]],
+                    "at": ["type": "array", "items": ["type": "string"]],
+                    "numbered": ["type": "boolean"],
+                    "reason": ["type": "string"],
+                ],
+            ]],
+        ],
+    ]
+
+    static func check(_ text: String, model: Model) async throws -> ([Issue], Int, Int) {
+        let (reply, inTokens, outTokens) = try await Checker.ask(system: system, schema: schema, text: text, model: model)
+        let found = (reply["suggestions"] as? [[String: Any]] ?? []).compactMap { d -> Issue? in
+            // the first 4 words are enough to find a line, and less likely to hold a typo that Fix all then changes
+            let at = (d["at"] as? [String] ?? []).map { $0.split(separator: " ").prefix(4).joined(separator: " ") }.filter { !$0.isEmpty }
+            guard let c = Layout.Change(rawValue: d["change"] as? String ?? ""), !at.isEmpty,
+                  c != .list || at.count >= 3 else { return nil }
+            let l = Layout(change: c, at: at, numbered: d["numbered"] as? Bool ?? false)
+            return Issue(range: NSRange(location: 0, length: 0), original: at.joined(separator: " | "), suggestion: l.label,
+                         kind: .layout, reason: d["reason"] as? String ?? "", layout: l)
+        }
+        let blanks = blankLines(text).filter { b in !found.contains { $0.layout?.at.first == b.layout?.at.first } }
+        return (found + blanks, inTokens, outTokens)
+    }
+
+    /// Claude never suggests these, so the app finds them: three or more lines in a row that are each a
+    /// paragraph (6+ words ending in . ? or !, not a list item) get a blank line above each after the first.
+    static func blankLines(_ text: String) -> [Issue] {
+        let lines = text.components(separatedBy: "\n")
+        func paragraph(_ l: String) -> Bool {
+            let t = l.trimmingCharacters(in: .whitespaces)
+            guard t.split(separator: " ").count >= 6, t.range(of: #"^([-*•]|\d+[.)])\s"#, options: .regularExpression) == nil else { return false }
+            return t.range(of: #"[.?!]["'”’)]*$"#, options: .regularExpression) != nil
+        }
+        var out: [Issue] = [], run: [String] = []
+        func flush() {
+            if run.count >= 3 {
+                for l in run.dropFirst() {
+                    let start = l.trimmingCharacters(in: .whitespaces).split(separator: " ").prefix(6).joined(separator: " ")
+                    let lay = Layout(change: .blankLine, at: [start], numbered: false)
+                    out.append(Issue(range: NSRange(location: 0, length: 0), original: start, suggestion: lay.label,
+                                     kind: .layout, reason: "Paragraphs read easier with space between them.", layout: lay))
+                }
+            }
+            run = []
+        }
+        for l in lines { if paragraph(l) { run.append(l) } else { flush() } }
+        flush()
+        return out
     }
 }
 

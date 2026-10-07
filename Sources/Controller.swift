@@ -27,6 +27,11 @@ final class Controller: NSObject, NSMenuDelegate {
     var lastError: String?
     var ignored: Set<String> = []
     var dictionary: Set<String> = []
+    // layout: paragraph splits, blank lines and lists for the whole message, found by text
+    var layoutIssues: [Issue] = []
+    var layoutCache: [String: [Issue]] = [:]   // whole message -> suggestions
+    var layoutInflight: String?
+    var allMarks: [Issue] { issues + layoutIssues }
     var axEnabled: Set<pid_t> = []
 
     // screen
@@ -62,6 +67,10 @@ final class Controller: NSObject, NSMenuDelegate {
         set { defaults.set(Array(newValue), forKey: "skipped") }
     }
     var running: Bool { enabled && (pausedUntil.map { $0 < Date() } ?? true) }
+    var layoutOn: Bool {
+        get { defaults.object(forKey: "layoutOn") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "layoutOn") }
+    }
 
     static let supportDir: URL = {
         let u = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("ClaudeGrammar")
@@ -235,14 +244,16 @@ final class Controller: NSObject, NSMenuDelegate {
             log("focus \(appName) role=\(AX.string(el, kAXRoleAttribute) ?? "?") len=\(v.length) frame=\(AX.frame(el).map { "\($0)" } ?? "none")")
             value = v
             issues = issuesFromCache(v)
+            layoutIssues = savedLayout(v as String) ?? []
             lastChange = Date()
         } else if v != value {
             shift(old: value, new: v)
             value = v
             showSaved()
+            if let saved = savedLayout(v as String) { layoutIssues = saved }
             lastChange = Date()
         }
-        if Date().timeIntervalSince(lastChange) > 2 { sendChecks(el) }
+        if Date().timeIntervalSince(lastChange) > 2 { sendChecks(el); sendLayoutCheck(el) }
         layout(el)
         hover()
         updateStatus()
@@ -264,6 +275,7 @@ final class Controller: NSObject, NSMenuDelegate {
         guard element != nil || overlay.isVisible || badge.isVisible else { return }
         element = nil
         issues = []
+        layoutIssues = []
         rects = [:]
         overlay.orderOut(nil)
         badge.orderOut(nil)
@@ -443,8 +455,14 @@ final class Controller: NSObject, NSMenuDelegate {
         let frame = AX.toCocoa(axFrame)
         let visible = frame.insetBy(dx: -3, dy: -4)
         rects = [:]
-        for i in issues where i.range.upperBound <= value.length {
-            let raw = lineRects(el, i.range)
+        // layout marks follow their text: find it again, and drop the ones whose text is gone
+        layoutIssues = layoutIssues.compactMap { i in
+            guard let marks = i.layout?.locate(in: value) else { return nil }
+            var c = i; c.range = marks[0]; return c
+        }
+        for i in allMarks where i.range.upperBound <= value.length {
+            let marks = i.layout?.locate(in: value) ?? [i.range]
+            let raw = marks.flatMap { lineRects(el, $0) }
             let rs = raw.map(AX.toCocoa).filter { visible.intersects($0) }
             if !rs.isEmpty { rects[i.id] = rs }
             else if debug && !loggedMissing.contains(i.id) {
@@ -461,7 +479,7 @@ final class Controller: NSObject, NSMenuDelegate {
         } else {
             let win = visible.insetBy(dx: -2, dy: -2)
             if overlay.frame != win { overlay.setFrame(win, display: false) }
-            underlines.marks = issues.compactMap { i in
+            underlines.marks = allMarks.compactMap { i in
                 rects[i.id].map { rs in (rs.map { $0.offsetBy(dx: -win.minX, dy: -win.minY) }, i.kind.color, i.id == hoverID) }
             }
             overlay.orderFrontRegardless()
@@ -499,11 +517,12 @@ final class Controller: NSObject, NSMenuDelegate {
 
     func placeBadge(_ frame: CGRect) {
         let checking = paragraphs(value).contains { inflight.contains($0.1) }
-        guard !issues.isEmpty || checking else { badge.orderOut(nil); return }
-        let state = "\(issues.count) \(checking)"
+        let count = allMarks.count
+        guard count > 0 || checking else { badge.orderOut(nil); return }
+        let state = "\(count) \(checking)"
         if state != badgeState || badge.contentView == nil {
             badgeState = state
-            badge.contentView = ClickThroughHostingView(rootView: BadgeView(count: issues.count, checking: checking) { [weak self] in self?.fixAll() })
+            badge.contentView = ClickThroughHostingView(rootView: BadgeView(count: count, checking: checking) { [weak self] in self?.fixAll() })
         }
         let size = badge.contentView!.fittingSize
         let screen = NSScreen.screens.first { $0.frame.intersects(frame) }?.visibleFrame ?? frame
@@ -536,7 +555,7 @@ final class Controller: NSObject, NSMenuDelegate {
         case "translate": translateMenu()
         case "dump":
             log("value: \(value)")
-            for i in issues { log("  \(i.range) \(i.kind) \(i.original) -> \(i.suggestion) rects=\(rects[i.id] ?? [])") }
+            for i in allMarks { log("  \(i.range) \(i.kind) \(i.original) -> \(i.suggestion) rects=\(rects[i.id] ?? [])") }
             log("card \(card.isVisible ? "\(card.frame)" : "hidden") badge \(badge.isVisible ? "\(badge.frame)" : "hidden")")
         default: break
         }
@@ -546,7 +565,7 @@ final class Controller: NSObject, NSMenuDelegate {
         debugCommand()
         let m = fakeMouse ?? NSEvent.mouseLocation
         if card.isVisible && card.frame.insetBy(dx: -4, dy: -4).contains(m) { lastInside = Date(); return }
-        if let i = issues.first(where: { rects[$0.id]?.contains { $0.insetBy(dx: -1, dy: -4).contains(m) } ?? false }) {
+        if let i = allMarks.first(where: { rects[$0.id]?.contains { $0.insetBy(dx: -1, dy: -4).contains(m) } ?? false }) {
             lastInside = Date()
             if hoverID != i.id { showCard(i) }
             return
@@ -556,7 +575,7 @@ final class Controller: NSObject, NSMenuDelegate {
 
     func showCard(_ i: Issue) {
         hoverID = i.id
-        let view = CardView(issue: i, total: issues.filter(\.hasFix).count,
+        let view = CardView(issue: i, total: allMarks.filter(\.hasFix).count,
                             accept: { [weak self] in self?.accept(i.id) },
                             ignore: { [weak self] in self?.ignore(i.id) },
                             addWord: { [weak self] in self?.addToDictionary(i.id) },
@@ -581,15 +600,16 @@ final class Controller: NSObject, NSMenuDelegate {
     // MARK: actions
 
     func accept(_ id: UUID) {
-        guard let i = issues.first(where: { $0.id == id }) else { return }
+        guard let i = allMarks.first(where: { $0.id == id }) else { return }
         hideCard()
-        replace([i])
+        if i.layout != nil { applyLayouts([i]) } else { replace([i]) }
     }
 
     func ignore(_ id: UUID) {
-        guard let i = issues.first(where: { $0.id == id }) else { return }
+        guard let i = allMarks.first(where: { $0.id == id }) else { return }
         ignored.insert(i.ignoreKey)
         issues.removeAll { $0.id == id }
+        layoutIssues.removeAll { $0.id == id }
         hideCard()
     }
 
@@ -601,10 +621,12 @@ final class Controller: NSObject, NSMenuDelegate {
         hideCard()
     }
 
+    /// Wording first, then layout, since layout changes move lines around.
     func fixAll() {
-        log("fix all: \(issues.filter(\.hasFix).count) fixes")
+        log("fix all: \(issues.filter(\.hasFix).count) fixes, \(layoutIssues.count) layout")
         hideCard()
-        replace(issues)
+        let layout = layoutIssues
+        replace(issues) { [weak self] in self?.applyLayouts(layout) }
     }
 
     func fixParagraph() {
@@ -615,9 +637,9 @@ final class Controller: NSObject, NSMenuDelegate {
     }
 
     /// Apply fixes from last to first so earlier positions stay valid.
-    func replace(_ all: [Issue]) {
+    func replace(_ all: [Issue], then: (() -> Void)? = nil) {
         let list = all.filter(\.hasFix)
-        guard let el = element, !list.isEmpty, !editing else { return }
+        guard let el = element, !list.isEmpty, !editing else { then?(); return }
         editing = true
         let before = value
         let caret = selection(el)
@@ -648,6 +670,7 @@ final class Controller: NSObject, NSMenuDelegate {
             editing = false
             log("fixes done")
             updateStatus()
+            then?()
         }
 
         func next() {
@@ -659,6 +682,184 @@ final class Controller: NSObject, NSMenuDelegate {
             }
         }
         next()
+    }
+
+    // MARK: layout
+
+    func savedLayout(_ v: String) -> [Issue]? {
+        guard layoutOn, let saved = layoutCache[v] else { return nil }
+        return saved.filter { !ignored.contains($0.ignoreKey) }
+    }
+
+    /// The whole message goes to Claude once you pause, if it's long enough to have a layout.
+    func sendLayoutCheck(_ el: AXUIElement) {
+        let key = value as String
+        guard layoutOn, layoutInflight == nil, layoutCache[key] == nil, value.length <= 8000 else { return }
+        let words = key.split(whereSeparator: \.isWhitespace).count
+        let lines = key.split(separator: "\n").count
+        guard words >= 40 || lines >= 3 else { return }
+        layoutInflight = key
+        let text = displayText(el)
+        log("layout check \(words) words, \(lines) lines")
+        let m = model
+        Task {
+            do {
+                let (found, inTokens, outTokens) = try await LayoutChecker.check(text, model: m)
+                await MainActor.run {
+                    self.layoutInflight = nil
+                    self.layoutCache[key] = found
+                    self.recordUsage(CheckResult(issues: [], inputTokens: inTokens, outputTokens: outTokens), model: m)
+                    log("layout got \(found.count): " + found.map { "\($0.layout!.change.rawValue) \($0.original)" }.joined(separator: "; "))
+                    // marks that can't be found in the text as it is now drop out on the next draw
+                    if self.layoutOn { self.layoutIssues = found.filter { !self.ignored.contains($0.ignoreKey) } }
+                }
+            } catch {
+                await MainActor.run { self.layoutInflight = nil; self.layoutCache[key] = []; log("layout error \(error)") }
+            }
+        }
+    }
+
+    /// The message as you see it, blank lines included. Chrome-based apps leave blank lines out of the text
+    /// they hand over, but their own count has one break per blank line and none for a plain line break.
+    func displayText(_ el: AXUIElement) -> String {
+        guard let box = AX.boxText(el, upTo: value.length) else { return value as String }
+        let b = box as NSString
+        if b.isEqual(to: value as String) { return value as String }
+        var out: [unichar] = [], i = 0, j = 0
+        while i < value.length {
+            let c = value.character(at: i)
+            if j < b.length && c == b.character(at: j) { out += c == 10 ? [10, 10] : [c]; i += 1; j += 1 }
+            else if c == 10 { out.append(10); i += 1 }
+            else if j < b.length && b.character(at: j) == 10 { out.append(10); j += 1 }
+            else { return value as String }
+        }
+        return String(utf16CodeUnits: out, count: out.count)
+    }
+
+    /// Bring our copy up to date between edits, moving underlines with it.
+    func refresh(_ el: AXUIElement) {
+        guard let now = AX.string(el, kAXValueAttribute) as NSString?, now != value else { return }
+        shift(old: value, new: now)
+        value = now
+    }
+
+    /// Makes layout changes from the bottom up. Line breaks go in by pasting, never by pressing Return,
+    /// which sends the message in the Claude app and Slack.
+    func applyLayouts(_ list: [Issue], then: (() -> Void)? = nil) {
+        guard let el = element, !list.isEmpty, !editing else { then?(); return }
+        editing = true
+        refresh(el)
+        var todo = list.compactMap { i in i.layout?.locate(in: value).map { (i, $0[0].location) } }
+            .sorted { $0.1 > $1.1 }.map(\.0)
+        func next() {
+            guard !todo.isEmpty else {
+                refresh(el)
+                lastChange = Date()
+                editing = false
+                log("layout done")
+                updateStatus()
+                then?()
+                return
+            }
+            let i = todo.removeFirst()
+            applyLayout(el, i) { ok in
+                if ok { self.layoutIssues.removeAll { $0.id == i.id } } else { log("layout '\(i.suggestion)' didn't go in") }
+                next()
+            }
+        }
+        next()
+    }
+
+    func applyLayout(_ el: AXUIElement, _ i: Issue, done: @escaping (Bool) -> Void) {
+        refresh(el)
+        guard let l = i.layout, let marks = l.locate(in: value) else { return done(false) }
+        switch l.change {
+        case .split:
+            // the space before the sentence becomes a break, or a blank line if the message uses them
+            let gap = displayText(el).contains("\n\n") ? "\n\n" : "\n"
+            insert(el, over: NSRange(location: marks[0].location - 1, length: 1), gap, done: done)
+        case .blankLine:
+            insert(el, over: NSRange(location: marks[0].location, length: 0), "\n", done: done)
+        case .list:
+            // type the marker at the start of each line, top down: rich boxes like the Claude app turn
+            // "- " and "1. " into a real list as you type them, and plain boxes keep them as text
+            var k = 0
+            func step() {
+                guard k < l.at.count else { return done(true) }
+                refresh(el)
+                guard let line = Layout(change: .blankLine, at: [l.at[k]], numbered: false).locate(in: value)?.first
+                        ?? (k == 0 ? l.locate(in: value)?.first : nil) else { log("list line \(k + 1) not found"); return done(k > 0) }
+                let marker = l.numbered ? "\(k + 1). " : "- "
+                caret(el, at: line.location) { ok in
+                    guard ok else { log("no cursor at list line \(k + 1)"); return done(k > 0) }
+                    let before = AX.string(el, kAXValueAttribute)
+                    Self.type(marker)
+                    Self.wait(until: { AX.string(el, kAXValueAttribute) != before }) { changed in
+                        guard changed else { log("list marker didn't go in on line \(k + 1)"); return done(k > 0) }
+                        k += 1; step()
+                    }
+                }
+            }
+            step()
+        }
+    }
+
+    /// Selects a range (or puts the cursor at a spot) and pastes text over it, after checking it's the right text.
+    func insert(_ el: AXUIElement, over r: NSRange, _ text: String, done: @escaping (Bool) -> Void) {
+        guard r.location >= 0, r.upperBound <= value.length, let map = boxMap(el) else { return done(false) }
+        if r.length > 0, let at = AX.string(el, for: Self.toBox(r, map)), at != value.substring(with: r) { return done(false) }
+        let go = { (ok: Bool) in
+            guard ok else { log("could not select for layout at \(r)"); return done(false) }
+            // an empty line doesn't show in the text Chrome hands over, only in the box's own text
+            let live = { "\(AX.string(el, kAXValueAttribute) ?? "")\u{1}\(AX.boxText(el, upTo: (AX.string(el, kAXValueAttribute) ?? "").utf16.count) ?? "")" }
+            let before = live()
+            self.paste(text) { Self.wait(until: { live() != before }) { done($0) } }
+        }
+        if r.length > 0 { select(el, r, expect: value.substring(with: r), done: go) }
+        else { caret(el, at: r.location, done: go) }
+    }
+
+    /// Selects a range and waits until the box reports exactly that text as selected. Positions alone can't be
+    /// trusted at the end of a line: rich boxes like the Claude app may take the line break too, and their
+    /// positions don't count it. If the selection runs long, select all but the last letter and take one more
+    /// with Shift-Right, which stays on the line.
+    func select(_ el: AXUIElement, _ r: NSRange, expect text: String, done: @escaping (Bool) -> Void) {
+        let selected = { AX.string(el, kAXSelectedTextAttribute) }
+        func shiftRight() {
+            if r.length > 1 { select(el, NSRange(location: r.location, length: r.length - 1)) } else { select(el, NSRange(location: r.location, length: 0)) }
+            Self.wait(until: { r.length == 1 ? self.selection(el)?.length == 0 : selected() == String(text.dropLast()) }) { ok in
+                guard ok else { log("still selected \((selected() ?? "nil").debugDescription)"); return done(false) }
+                Self.key(124, .maskShift)
+                Self.wait(until: { selected() == text }) { ok in
+                    if !ok { log("after Shift-Right selected \((selected() ?? "nil").debugDescription)") }
+                    done(ok)
+                }
+            }
+        }
+        // Ending right at a line end, a rich box may also take the line break while reporting only the word,
+        // so a paste would join the two lines. There, never select up to the end directly.
+        if r.upperBound == value.length || value.character(at: r.upperBound) == 10 { return shiftRight() }
+        select(el, r)
+        Self.wait(until: { (selected() ?? "").isEmpty == false || self.selection(el) == r && selected() == nil }) { _ in
+            let got = selected()
+            if got == text || (got == nil && self.selection(el) == r) { return done(true) }
+            log("selected \((got ?? "nil").debugDescription) for \(text.debugDescription); trying Shift-Right")
+            shiftRight()
+        }
+    }
+
+    func caret(_ el: AXUIElement, at loc: Int, done: @escaping (Bool) -> Void) {
+        let r = NSRange(location: loc, length: 0)
+        select(el, r)
+        Self.wait(until: { self.selection(el) == r }, then: done)
+    }
+
+    /// Types text as real key presses, so a box's own shortcuts (like "- " for a list) see it.
+    /// Only what list markers need: digits, ".", "-" and space.
+    static let keyCodes: [Character: CGKeyCode] = ["0": 29, "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "6": 22, "7": 26,
+                                                    "8": 28, "9": 25, ".": 47, "-": 27, " ": 49]
+    static func type(_ s: String) {
+        for ch in s { if let k = keyCodes[ch] { key(k, []) } }
     }
 
     /// Fixes on the same line become one fix from the first to the last, so each line takes one paste.
@@ -702,26 +903,12 @@ final class Controller: NSObject, NSMenuDelegate {
             let now = AX.string(el, kAXValueAttribute) ?? ""
             if now == expected { done(true); return }
             guard now == cur as String else { done(false); return }
-            self.select(el, i.range)
-            // Chrome takes a moment to report a new selection, and a moment more to show a paste
-            let stretched = { (r: NSRange?) in r.map { $0.location == i.range.location && $0.length > i.range.length } ?? false }
-            Self.wait(until: { self.selection(el) == i.range || stretched(self.selection(el)) }) { _ in
-                if self.selection(el) == i.range { return pasteFix() }
-                // A word at the end of a list line: Chrome stretches the selection into the next line.
-                // Select all but its last letter, then take one more with Shift-Right, which stays on the line.
-                guard stretched(self.selection(el)), i.range.length > 0 else {
+            self.select(el, i.range, expect: i.original) { ok in
+                guard ok else {
                     log("could not select '\(i.original)' in \(self.appName); not pasting")
                     return done(false)
                 }
-                self.select(el, NSRange(location: i.range.location, length: i.range.length - 1))
-                Self.wait(until: { self.selection(el)?.length == i.range.length - 1 }) { _ in
-                    Self.key(124, .maskShift)
-                    Self.wait(until: { self.selection(el) == i.range }) { ok in
-                        if ok { return pasteFix() }
-                        log("could not select '\(i.original)' in \(self.appName) at a line end; not pasting")
-                        done(false)
-                    }
-                }
+                pasteFix()
             }
         }
 
@@ -811,7 +998,7 @@ final class Controller: NSObject, NSMenuDelegate {
         }
         if code == 53 && f.isEmpty && translator.visible { DispatchQueue.main.async { self.translator.close() }; return true }
         guard let id = hoverID, f.isEmpty else { return false }
-        if code == 48, issues.first(where: { $0.id == id })?.hasFix == true { DispatchQueue.main.async { self.accept(id) }; return true }
+        if code == 48, allMarks.first(where: { $0.id == id })?.hasFix == true { DispatchQueue.main.async { self.accept(id) }; return true }
         if code == 53 { DispatchQueue.main.async { self.ignore(id) }; return true }
         return false
     }
@@ -843,7 +1030,7 @@ final class Controller: NSObject, NSMenuDelegate {
         if b.image?.accessibilityDescription != symbol {
             b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: symbol)
         }
-        let t = running && !issues.isEmpty ? " \(issues.count)" : ""
+        let t = running && !allMarks.isEmpty ? " \(allMarks.count)" : ""
         if b.title != t { b.title = t; b.imagePosition = .imageLeading }
     }
 
@@ -865,6 +1052,7 @@ final class Controller: NSObject, NSMenuDelegate {
         if Checker.apiKey == nil { item("Add your Anthropic API key…", #selector(askForKey)) }
         if let e = lastError { item("Last check failed: \(e)", nil) }
         item("On", #selector(toggleOn), on: enabled)
+        item("Suggest layout (paragraphs, lists)", #selector(toggleLayout), on: layoutOn)
         let front = NSWorkspace.shared.frontmostApplication
         if let id = front?.bundleIdentifier, id != Bundle.main.bundleIdentifier {
             item("Skip in \(front?.localizedName ?? id)", #selector(toggleSkip(_:)), on: skipped.contains(id)).representedObject = id
@@ -925,6 +1113,7 @@ final class Controller: NSObject, NSMenuDelegate {
         item("Quit", #selector(quit), key: "q", mods: .command)
     }
 
+    @objc func toggleLayout() { layoutOn.toggle(); if !layoutOn { layoutIssues = [] }; updateStatus() }
     @objc func toggleOn() { enabled.toggle(); if !enabled { reset() }; updateStatus() }
     @objc func pause() { pausedUntil = Date().addingTimeInterval(3600); reset(); updateStatus() }
     @objc func resume() { pausedUntil = nil; updateStatus() }
