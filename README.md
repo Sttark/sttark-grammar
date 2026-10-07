@@ -40,7 +40,7 @@ The app is also attached to each [release](https://github.com/Sttark/claude-gram
 
 A purple underline means a layout change: start a new paragraph, add a blank line between paragraphs, turn a sentence that strings several tasks or steps together with commas into a bulleted or numbered list, or make a must-see phrase bold or underlined. The card shows the list before you take it. Hover it to see the change, and take it with the fix button or **Tab**. **Fix all** makes the wording fixes first, then the layout changes.
 
-- Claude looks at the whole message for paragraph splits, list sentences and phrases to style once it's at least 40 words or 3 lines. The app finds missing blank lines itself: 3 or more lines in a row that are each a full paragraph.
+- Claude looks at the whole message for paragraph splits, list sentences and phrases to style once it's at least 20 words or 3 lines. The app finds missing blank lines itself: 3 or more lines in a row that are each a full paragraph.
 - Line breaks go in by pasting, never by pressing Return, which would send the message in the Claude app or Slack. A list replaces its sentence with a lead-in line and one item per line, then gets "- " or "1. " typed at the start of each item, which rich boxes like the Claude app turn into a real list.
 - Bold and underline are only suggested in boxes that can hold them, and go in with Command-B or Command-U. If a box turns out not to take one, the app stops suggesting it there. The Claude app's box has neither, and Slack is never sent Command-U, which uploads a file there.
 - Turn it off with **Suggest layout** in the menu. It costs about one extra check each time you pause in a long message.
@@ -88,6 +88,8 @@ The menu bar icon (an I-beam cursor) has:
 Terminal, iTerm2, Ghostty, Warp, 1Password and Keychain Access are skipped from the start. Password fields are never readable by any app, and search boxes are skipped.
 
 ## Cost and privacy
+
+The app keeps a log of what its fixes and layout changes did at `~/Library/Logs/ClaudeGrammar.log`, so a fix that went wrong can be traced. It holds short pieces of the text being fixed, stays on your Mac, and starts over past 1 MB.
 
 Each paragraph you write is sent to Claude through Anthropic's API, billed to your API key. With the default model (Claude Haiku 4.5), one check costs about $0.003. A heavy day of typing comes to around 30 to 50 cents. The menu shows today's total.
 
