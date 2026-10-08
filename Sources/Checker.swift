@@ -133,7 +133,8 @@ struct Tidy {
             if l.blankBefore && blankLines { out += "<p><br></p>" }
             if let tag {
                 if open == nil { out += "<\(tag)>"; open = tag }
-                out += "<li><p>\(esc(l.text))</p></li>"
+                // plain list items: Gmail spaces out a paragraph inside an item, and editors that need one add it
+                out += "<li>\(esc(l.text))</li>"
             } else {
                 out += "<p>\(esc(l.text))</p>"
             }
