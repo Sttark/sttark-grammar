@@ -271,7 +271,8 @@ enum Checker {
         // Claude now and then lets part of its own answer ("issues":[], "Issues: ...") leak into the corrected copy;
         // a fix that adds line breaks or that kind of text is never a real fix
         issues.removeAll { i in
-            (i.suggestion.contains("\n") && !i.original.contains("\n"))
+            (i.original != i.suggestion && Diff.plainQuotes(i.original) == Diff.plainQuotes(i.suggestion))
+                || (i.suggestion.contains("\n") && !i.original.contains("\n"))
                 || ["\"issues\"", "\"corrected\"", "Issues:", "{", "}"].contains { i.suggestion.contains($0) && !i.original.contains($0) }
         }
         return CheckResult(issues: issues.sorted { $0.range.location < $1.range.location }, inputTokens: inTokens, outputTokens: outTokens)
@@ -322,24 +323,46 @@ enum Checker {
 /// Positions come from comparing the text with Claude's corrected copy word by word,
 /// so underlines land on exactly the right characters. Claude's own list supplies the reasons.
 enum Diff {
+    static func plainQuotes(_ s: String) -> String {
+        String(s.map { "’‘".contains($0) ? "'" : "“”".contains($0) ? "\"" : $0 })
+    }
+
     /// Claude tends to send back straight quotes (didn't) for curly ones (didn’t) or the other way round.
-    /// Give its copy the text's own style, so a quote swap is never shown as a fix.
+    /// Give its copy the text's own style, so a quote swap is never shown as a fix: a word the text has
+    /// (didn’t, Here's) is spelled the text's way, and anything new takes the style the text uses most.
     static func matchQuotes(_ copy: String, like text: String) -> String {
-        let curlySingle = text.filter { $0 == "’" || $0 == "‘" }.count, straightSingle = text.filter { $0 == "'" }.count
-        let curlyDouble = text.filter { $0 == "“" || $0 == "”" }.count, straightDouble = text.filter { $0 == "\"" }.count
-        var out = "", prev: Character? = nil
-        for c in copy {
+        let count = { (set: String) in text.filter { set.contains($0) }.count }
+        let single: Character? = count("’‘") > count("'") ? "’" : count("'") > count("’‘") ? "'" : nil
+        let double: Bool? = count("“”") > count("\"") ? true : count("\"") > count("“”") ? false : nil
+        // words with an apostrophe in them or at the end (Griffins’), as the text spells them
+        let word = try! NSRegularExpression(pattern: #"[\p{L}\p{N}]+(?:['’‘][\p{L}\p{N}]+)+['’]?|[\p{L}\p{N}]+['’](?![\p{L}\p{N}])"#)
+        let t = text as NSString
+        var forms: [String: String] = [:]
+        for m in word.matches(in: text, range: NSRange(location: 0, length: t.length)) {
+            let w = t.substring(with: m.range)
+            if forms[plainQuotes(w)] == nil { forms[plainQuotes(w)] = w }
+        }
+        let out = NSMutableString(string: copy)
+        for m in word.matches(in: copy, range: NSRange(location: 0, length: out.length)).reversed() {
+            let w = out.substring(with: m.range)
+            if let f = forms[plainQuotes(w)] { out.replaceCharacters(in: m.range, with: f) }
+            else if let q = single { out.replaceCharacters(in: m.range, with: String(w.map { "'’‘".contains($0) ? q : $0 })) }
+        }
+        // quote marks outside words: single ones that open (not right after a letter), and all double ones
+        var result = "", prev: Character? = nil
+        for c in out as String {
             let opens = prev == nil || prev!.isWhitespace || "([{“‘-".contains(prev!)
-            switch c {
-            case "'" where curlySingle > straightSingle: out.append(opens ? "‘" : "’")
-            case "’", "‘" where straightSingle > curlySingle: out.append("'")
-            case "\"" where curlyDouble > straightDouble: out.append(opens ? "“" : "”")
-            case "“", "”" where straightDouble > curlyDouble: out.append("\"")
-            default: out.append(c)
+            let afterWord = prev.map { $0.isLetter || $0.isNumber } ?? false
+            if "'’‘".contains(c), !afterWord, let q = single {
+                result.append(q == "’" ? (opens ? "‘" : "’") : "'")
+            } else if "\"“”".contains(c), let curly = double {
+                result.append(curly ? (opens ? "“" : "”") : "\"")
+            } else {
+                result.append(c)
             }
             prev = c
         }
-        return out
+        return result
     }
 
     struct Token { let range: NSRange; let text: String; let isWord: Bool }
