@@ -3,12 +3,12 @@ import SwiftUI
 
 let debug = ProcessInfo.processInfo.environment["CG_DEBUG"] != nil
 let started = Date()
-/// Off unless turned on (`defaults write com.sttark.claude-grammar logToFile -bool true`): fixes and tidy-ups
-/// are noted in ~/Library/Logs/ClaudeGrammar.log, with pieces of the text, so a run that went wrong can be read
+/// Off unless turned on (`defaults write com.sttark.sttark-grammar logToFile -bool true`): fixes and tidy-ups
+/// are noted in ~/Library/Logs/SttarkGrammar.log, with pieces of the text, so a run that went wrong can be read
 /// afterward. The file starts over past 1 MB.
 let logFile: FileHandle? = {
     guard UserDefaults.standard.bool(forKey: "logToFile") else { return nil }
-    let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/ClaudeGrammar.log")
+    let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/SttarkGrammar.log")
     if let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int, size > 1_000_000 { try? FileManager.default.removeItem(at: url) }
     if !FileManager.default.fileExists(atPath: url.path) { FileManager.default.createFile(atPath: url.path, contents: nil) }
     let h = try? FileHandle(forWritingTo: url); _ = try? h?.seekToEnd(); return h
@@ -97,12 +97,8 @@ final class Controller: NSObject, NSMenuDelegate {
         set { defaults.set(newValue, forKey: "tidyOn") }
     }
 
-    static let supportDir: URL = {
-        let u = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("ClaudeGrammar")
-        try? FileManager.default.createDirectory(at: u, withIntermediateDirectories: true)
-        return u
-    }()
-    var dictionaryURL: URL { Self.supportDir.appendingPathComponent("dictionary.txt") }
+    var dictionaryURL: URL { supportDir.appendingPathComponent("dictionary.txt") }
+    let updater = Updater()
 
     var clickMonitor: Any?
 
@@ -132,6 +128,8 @@ final class Controller: NSObject, NSMenuDelegate {
         _ = Checker.apiKey
         _ = Speaker.apiKey
         installKeyTap()
+        updater.changed = { [weak self] in self?.updateStatus() }
+        updater.start()
         timer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in self?.tick() }
         RunLoop.main.add(timer!, forMode: .common)
         speaker.changed = { [weak self] in self?.updateStatus() }
@@ -144,7 +142,7 @@ final class Controller: NSObject, NSMenuDelegate {
         let alert = NSAlert()
         alert.icon = NSImage(systemSymbolName: "speaker.wave.2.fill", accessibilityDescription: nil)
         alert.messageText = "OpenAI API key for Read aloud"
-        alert.informativeText = "Claude can't speak, so Read aloud sends the text you select to OpenAI's voice model. Paste an API key from platform.openai.com. It's kept in your Mac's Keychain."
+        alert.informativeText = "Claude can't speak, so Read aloud sends the text you select to OpenAI's voice model. Paste the OpenAI API key you got from DT. It's saved on this Mac where only your account can read it."
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
         field.placeholderString = "sk-..."
         alert.accessoryView = field
@@ -216,7 +214,7 @@ final class Controller: NSObject, NSMenuDelegate {
         let alert = NSAlert()
         alert.icon = NSImage(systemSymbolName: "key.fill", accessibilityDescription: nil)
         alert.messageText = "Anthropic API key"
-        alert.informativeText = "ClaudeGrammar sends what you type to Claude to check it. Paste an API key from console.anthropic.com. It's kept in your Mac's Keychain."
+        alert.informativeText = "Sttark Grammar sends what you type to Claude to check it. Paste the Anthropic API key you got from DT. It's saved on this Mac where only your account can read it."
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
         field.placeholderString = "sk-ant-..."
         alert.accessoryView = field
@@ -1147,11 +1145,21 @@ final class Controller: NSObject, NSMenuDelegate {
 
     // MARK: menu bar
 
+    static let sIcon: NSImage? = {
+        guard let u = Bundle.main.url(forResource: "MenuIcon", withExtension: "pdf"), let i = NSImage(contentsOf: u) else { return nil }
+        i.size = NSSize(width: 16.7, height: 15)
+        i.isTemplate = true
+        i.accessibilityDescription = "character.cursor.ibeam"
+        return i
+    }()
+
     func updateStatus() {
         guard let b = statusItem?.button else { return }
         let symbol = speaker.isReading ? "speaker.wave.2.fill" : !AXIsProcessTrusted() || Checker.apiKey == nil ? "exclamationmark.triangle" : !running ? "pause.circle" : lastError != nil ? "exclamationmark.triangle" : "character.cursor.ibeam"
         if b.image?.accessibilityDescription != symbol {
-            b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: symbol)
+            // the Sttark S when all is well; a symbol that says what's wrong otherwise
+            b.image = symbol == "character.cursor.ibeam" ? Self.sIcon ?? NSImage(systemSymbolName: symbol, accessibilityDescription: symbol)
+                : NSImage(systemSymbolName: symbol, accessibilityDescription: symbol)
         }
         let t = running && !issues.isEmpty ? " \(issues.count)" : ""
         if b.title != t { b.title = t; b.imagePosition = .imageLeading }
@@ -1168,7 +1176,14 @@ final class Controller: NSObject, NSMenuDelegate {
             menu.addItem(i)
             return i
         }
-        item("Claude grammar checker", nil)
+        item("Sttark Grammar \(Updater.version)", nil)
+        updater.check()
+        if updater.installing {
+            item("Updating…", nil)
+        } else if let r = updater.available {
+            item("Update to \(r.version)", #selector(installUpdate)).attributedTitle = NSAttributedString(
+                string: "Update to \(r.version)", attributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)])
+        }
         if !AXIsProcessTrusted() {
             item("Needs Accessibility permission…", #selector(openAccessibility))
         }
@@ -1233,10 +1248,22 @@ final class Controller: NSObject, NSMenuDelegate {
         item("My dictionary…", #selector(openDictionary))
         if Checker.apiKey != nil { item("Change API key…", #selector(askForKey)) }
         if Speaker.apiKey != nil { item("Change OpenAI key for Read aloud…", #selector(askForOpenAIKey)) }
+        if updater.available == nil && !updater.installing { item("Check for updates", #selector(checkForUpdates)) }
         menu.addItem(.separator())
         item("Quit", #selector(quit), key: "q", mods: .command)
     }
 
+    @objc func installUpdate() { updater.install() }
+    @objc func checkForUpdates() {
+        updater.check(force: true) { msg in
+            let a = NSAlert()
+            a.messageText = self.updater.available == nil ? "No update" : "Update ready"
+            a.informativeText = msg
+            if self.updater.available != nil { a.addButton(withTitle: "Update now"); a.addButton(withTitle: "Later") }
+            NSApp.activate(ignoringOtherApps: true)
+            if a.runModal() == .alertFirstButtonReturn && self.updater.available != nil { self.updater.install() }
+        }
+    }
     @objc func toggleTidy() { tidyOn.toggle(); if !tidyOn { hideCard() }; updateStatus() }
     @objc func toggleOn() { enabled.toggle(); if !enabled { reset() }; updateStatus() }
     @objc func pause() { pausedUntil = Date().addingTimeInterval(3600); reset(); updateStatus() }

@@ -51,24 +51,13 @@ final class Speaker {
 
     // MARK: key
 
-    static let keychainItem: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                              kSecAttrService as String: "claude-grammar",
-                                              kSecAttrAccount as String: "openai-api-key"]
-
     static var apiKey: String? = {
         if let k = ProcessInfo.processInfo.environment["OPENAI_API_KEY"], !k.isEmpty { return k }
-        var q = keychainItem
-        q[kSecReturnData as String] = true
-        var out: AnyObject?
-        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
-        return String(data: d, encoding: .utf8)
+        return Keys.get("openai")
     }()
 
     static func saveKey(_ key: String) -> Bool {
-        SecItemDelete(keychainItem as CFDictionary)
-        var q = keychainItem
-        q[kSecValueData as String] = Data(key.utf8)
-        guard SecItemAdd(q as CFDictionary, nil) == errSecSuccess else { return false }
+        guard Keys.set("openai", key) else { return false }
         apiKey = key
         return true
     }

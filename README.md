@@ -1,14 +1,15 @@
-# ClaudeGrammar
+# Sttark Grammar
 
-A Mac menu bar app that uses Claude to check your writing as you type, in any app: the Claude app, Gmail, Slack, Google Chat, Asana, TextEdit and more. It works like Grammarly.
+A Mac menu bar app for Sttark that uses Claude to check your writing as you type, in any app: the Claude app, Gmail, Slack, Google Chat, Asana, TextEdit and more.
 
-- **Fixes as you type.** Spelling, grammar and capitals get underlined (red, amber and blue). Hover one to see the fix, and click it or press Tab to take it.
+- **Fixes as you type.** Spelling, grammar and capitals get underlined (red for spelling, yellow for grammar and capitals). Hover one to see the fix, and click it or press Tab to take it.
 - **Fix all.** A small dot in the corner of the text box counts the mistakes. Hover it and take them all in one click.
 - **Tidy up.** For a longer message, Claude offers a cleaner layout: paragraphs split, blank lines between them, and things run together turned into a bulleted or numbered list. One click swaps it in.
 - **Your words and names.** Add jargon to your dictionary so it's never flagged, and save names like Sttark with their capital so the app always writes them that way. Web and email addresses are left alone.
 - **Translate to Chinese**, with an English check of what the Chinese says.
 - **Read aloud**, in a natural voice, at the speed you pick.
 - **Shortcuts** you can change for Fix all, Tidy up, read aloud and translate.
+- **Updates itself.** When a new version is out, you get a notice. One click installs it and keeps your settings.
 
 ![The corner dot, the card for a misspelled word, and the dot's card with Fix all, Tidy up and a preview of the tidied message](screenshot.png)
 
@@ -16,36 +17,33 @@ A Mac menu bar app that uses Claude to check your writing as you type, in any ap
 
 ## Install
 
-You need a Mac on macOS 14 or later, and your own Anthropic API key.
+You need a Mac on macOS 14 or later, and two API keys from DT: one from Anthropic (for checking) and one from OpenAI (for read aloud).
 
-1. Install Apple's command line tools if you don't have them. In Terminal:
-   ```
-   xcode-select --install
-   ```
-2. Download, build and install:
-   ```
-   gh repo clone Sttark/claude-grammar ~/claude-grammar
-   ~/claude-grammar/install.sh
-   ```
-   This puts the app in `~/Applications`, sets it to start when you log in, and opens it.
-3. macOS asks you to allow ClaudeGrammar under **System Settings > Privacy & Security > Accessibility**. Turn it on. The app can't see what you type until you do.
-4. Paste your Anthropic API key when the app asks. Get a key at [console.anthropic.com](https://console.anthropic.com). It's saved in your Mac's Keychain.
+1. Download **SttarkGrammar.zip** from the [latest release](https://github.com/Sttark/sttark-grammar/releases/latest) and open it.
+2. Drag **SttarkGrammar** into your **Applications** folder, then open it.
+3. The first time, macOS says it can't check the app for malicious software, because it isn't sold through Apple. Click **Done**, go to **System Settings > Privacy & Security**, scroll down and click **Open Anyway**. You only do this once.
+4. macOS asks you to allow Sttark Grammar under **System Settings > Privacy & Security > Accessibility**. Turn it on. The app can't see what you type until you do.
+5. Paste the Anthropic key from DT when the app asks. It asks for the OpenAI key the first time you use read aloud.
 
-The app is also attached to each [release](https://github.com/Sttark/claude-grammar/releases) as a zip. Because the app isn't signed with an Apple developer account, macOS blocks a downloaded copy the first time you open it. To allow it, go to **System Settings > Privacy & Security** and click **Open Anyway**. Building with `install.sh` avoids that.
+The app starts by itself when you log in. Its icon in the menu bar is the Sttark S next to a text cursor.
+
+## Updates
+
+The app checks for a new version a few times a day. When there is one, you get a notice: click it, or choose **Update to …** at the top of the menu. The app downloads the new version, swaps it in and restarts in a few seconds. Your settings, dictionary, keys and the Accessibility permission all stay as they are. **Check for updates** in the menu checks right away.
 
 ## Using it
 
 - Type anywhere. About 4 to 5 seconds after you pause, mistakes get underlined.
-- Hover an underline to see the fix. Click the blue fix, or press **Tab**, to take it. **Esc** ignores it.
+- Hover an underline to see the fix. Click the green fix, or press **Tab**, to take it. **Esc** ignores it.
 - **Add to dictionary** stops a word from being flagged. Use it for names and jargon. A word saved with a capital, like Sttark, counts as a name: the app writes it that way everywhere except inside addresses like sttark.com. Edit the list with **My dictionary…** in the menu.
 - Web addresses, email addresses and file paths are never flagged.
-- A small 12-pixel dot sits in the corner of the text box, away from your text: gray and spinning while it checks, red with the number of mistakes, purple when there's a tidy-up, red with a purple corner when there are both. Hover it for a card with **Fix all** and **Tidy up**, one click each. Click the dot to keep the card open; Esc or a click anywhere else closes it.
-- **Command-1** takes every fix (Fix all), and **Command-2** tidies up when the dot is purple. You can change both (see Shortcuts).
+- A small 12-pixel dot sits in the corner of the text box, away from your text: gray and spinning while it checks, red with the number of mistakes, blue when there's a tidy-up, red with a blue corner when there are both. Hover it for a card with **Fix all** and **Tidy up**, one click each. Click the dot to keep the card open; Esc or a click anywhere else closes it.
+- **Command-1** takes every fix (Fix all), and **Command-2** tidies up when the dot is blue. You can change both (see Shortcuts).
 - Made-up words get fixed to Claude's best guess from the sentence, using your dictionary, or flagged as not a word if there's no guess. Add your work terms to the dictionary so the guess is right.
 
 ### Tidy up
 
-For a longer message, the dot turns purple when Claude has a cleaner version: paragraphs split, blank lines between them, things run together turned into a bulleted or numbered list, and spelling fixed. Hover the dot to see it, and click **Tidy up** to swap your message for it. Command-Z undoes it.
+For a longer message, the dot turns blue when Claude has a cleaner version: paragraphs split, blank lines between them, things run together turned into a bulleted or numbered list, and spelling fixed. Hover the dot to see it, and click **Tidy up** to swap your message for it. Command-Z undoes it.
 
 - Claude gets the whole message once you pause, if it's at least 20 words or 3 lines. It keeps your meaning and only rewords what a list needs.
 - Tidying selects the whole message and pastes the new version over it in one go. The paste carries a formatted copy, which rich boxes like the Claude app, Slack, Asana and Gmail turn into real lists and bold, and a plain copy with "- " lines for plain boxes. Nothing is typed after, and Return is never pressed, since it would send the message in the Claude app or Slack.
@@ -72,7 +70,7 @@ Translation uses Claude Opus 5, which wrote more natural Chinese than Haiku in t
 
 Select text in any app and press **Command-`** (the key above Tab), or choose **Read selection aloud** from the menu bar icon. Reading starts in about a second. Press it again to stop. The menu bar icon turns into a speaker while it reads.
 
-Claude can't speak, so read aloud uses OpenAI's voice model (gpt-realtime-2.1-mini). The first time you use it, the app asks for an OpenAI API key from [platform.openai.com](https://platform.openai.com). It's saved in your Mac's Keychain. The rest of the app doesn't need it.
+Claude can't speak, so read aloud uses OpenAI's voice model (gpt-realtime-2.1-mini). The first time you use it, the app asks for the OpenAI key you got from DT. The rest of the app doesn't need it.
 
 Pick a speed under **Reading speed** in the menu: 0.75× to 2×. The model speaks at up to 1.5× itself. Above that the app speeds up the playback without raising the pitch.
 
@@ -90,7 +88,7 @@ Fix all and Tidy up only take over their keys while you're in a text box the app
 - **Command-Esc** can't be used: macOS opens the Game Overlay with it before any app sees it (System Settings > Keyboard > Keyboard Shortcuts > Game Controllers turns that off).
 - **Option-`** normally starts an accent like à. Used as a shortcut, it can't type accents in the boxes the app checks.
 
-The menu bar icon (an I-beam cursor) has:
+The menu bar icon (the Sttark S and a text cursor) has:
 - On/off
 - Offer to tidy up (paragraphs, lists)
 - Skip the app you're in
@@ -103,6 +101,7 @@ The menu bar icon (an I-beam cursor) has:
 - Today's checks and cost
 - My dictionary
 - Change API key, and the OpenAI key once you've added one
+- Check for updates, or Update when a new version is ready
 
 Terminal, iTerm2, Ghostty, Warp, 1Password and Keychain Access are skipped from the start. Password fields are never readable by any app, and search boxes are skipped.
 
@@ -114,29 +113,21 @@ The text goes to Anthropic and nowhere else, except text you have read aloud, wh
 
 ## Troubleshooting
 
-- **Nothing gets underlined.** Make sure ClaudeGrammar is on in System Settings > Privacy & Security > Accessibility. A triangle in the menu bar icon means it's missing that permission or a key.
-- **It worked, then stopped after an update.** Reinstalling makes macOS treat the app as new, so its Accessibility permission has to be turned on again.
+- **Nothing gets underlined.** Make sure Sttark Grammar is on in System Settings > Privacy & Security > Accessibility. A triangle in the menu bar icon means it's missing that permission or a key.
+- **It worked, then stopped after building it yourself.** A build made on your own Mac isn't signed with the Sttark certificate, so macOS treats each one as a new app and Accessibility has to be turned on again. Versions from the Releases page don't have this problem.
 - **Underlines in the wrong place, or none in one app.** Some apps don't tell other apps where their text sits on screen. Use Skip in the menu for that app.
 - **Read aloud stops when you switch speakers.** Connecting or dropping AirPods mid-read stops it. Press the shortcut again to start over on the new speaker.
 - **Command-` no longer switches windows.** Read aloud uses it. Change it under Shortcuts if you want it back.
 - **A shortcut won't record.** macOS keeps some keys for itself before any app sees them, like Command-Esc (see Shortcuts). Pick another.
-- **Red dotted underlines that aren't from ClaudeGrammar.** Chrome and the Claude app have their own spell checkers. Chrome's is under Settings > Languages > Spell check.
-
-## Update
-
-```
-cd ~/claude-grammar && git pull && ./install.sh
-```
-
-Turn Accessibility back on afterward (see Troubleshooting).
+- **Red dotted underlines that aren't from Sttark Grammar.** Chrome and the Claude app have their own spell checkers. Chrome's is under Settings > Languages > Spell check.
 
 ## Uninstall
 
-```
-~/claude-grammar/uninstall.sh
-```
+Quit it from the menu and drag it from Applications to the Trash. To also remove your keys, settings and dictionary, run `uninstall.sh` from this repo:
 
-This removes the app, the login item, your saved keys, settings, and dictionary.
+```
+curl -fsSL https://raw.githubusercontent.com/Sttark/sttark-grammar/main/uninstall.sh | zsh
+```
 
 ## How it works
 
@@ -148,22 +139,45 @@ This removes the app, the login item, your saved keys, settings, and dictionary.
 
 On a test paragraph with 12 mistakes, Haiku 4.5 caught 11 or 12 in about 3 s. Sonnet 5 (in the menu) took about 4.5 s, cost twice as much, and caught 8 to 11.
 
+### Building it yourself
+
+Most people should use the Releases page. To build from the code you need Apple's command line tools (`xcode-select --install`), then:
+
+```
+git clone https://github.com/Sttark/sttark-grammar.git ~/sttark-grammar
+~/sttark-grammar/install.sh
+```
+
+This builds the app into `~/Applications` and opens it. Without the Sttark signing certificate the build is signed ad hoc, so Accessibility has to be turned on again after each build.
+
+### Releases
+
+Every change to the app's code on `main` (`Sources`, `Resources`, `Info.plist`, `build.sh`) makes GitHub build, sign and publish a new release by itself (`.github/workflows/release.yml`). The version is 1 followed by the number of commits, so each one is higher than the last. The app looks at the latest release on GitHub, and installs it only if it's signed with the same Sttark certificate. The certificate is in the repo's secrets (`SIGN_P12`, `SIGN_P12_PASSWORD`). It's self-made, not from Apple: it keeps the Accessibility permission on through updates, but can't skip the Open Anyway step on a first install.
+
 ### Files
 
 - `Sources/AX.swift`: Accessibility API helpers (focused text box, where text sits on screen, edits)
-- `Sources/Checker.swift`: Claude requests and prompts (fixes and tidy-ups), API key storage, the word-by-word comparison, and the checks the app does itself (capitals, end punctuation, names, addresses)
+- `Sources/Checker.swift`: Claude requests and prompts (fixes and tidy-ups), the word-by-word comparison, and the checks the app does itself (capitals, end punctuation, names, addresses)
 - `Sources/Controller.swift`: main loop, where underlines and the dot go, hover cards, fixes, tidy-ups, keys, menu
 - `Sources/UI.swift`: underline overlay, hover card, the corner dot and its card
 - `Sources/Translate.swift`: the right-click translate item and its card. It's declared under `NSServices` in `Info.plist`.
 - `Sources/Speak.swift`: read aloud. It streams audio from OpenAI's realtime voice model over a WebSocket and plays it as it arrives, with a fresh audio engine for each read so it follows the current speaker.
 - `Sources/Shortcuts.swift`: the shortcuts you can change and how they're saved
-- `build.sh`: builds `build/ClaudeGrammar.app` for Apple Silicon and Intel
+- `Sources/Update.swift`: the update check and one-click install, where the keys are saved, and carrying settings over from the app's old name (ClaudeGrammar)
+- `Sources/Brand.swift`: Sttark colors and type, from the brand guide on docs.sttark.com
+- `Resources/`: the app icon and menu bar icon, made by `tools/make-icons.py`
+- `tools/screenshot.swift`: draws `screenshot.png`
+- `build.sh`: builds `build/SttarkGrammar.app` for Apple Silicon and Intel
 - `install.sh`, `uninstall.sh`
 - `mockup.html`: the original design mockup
 
-Settings: `defaults read com.sttark.claude-grammar`. Dictionary: `~/Library/Application Support/ClaudeGrammar/dictionary.txt`. Keys: Keychain items `claude-grammar` / `anthropic-api-key` and `claude-grammar` / `openai-api-key`. `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` environment variables take priority over the Keychain.
+Settings: `defaults read com.sttark.sttark-grammar`. Dictionary: `~/Library/Application Support/SttarkGrammar/dictionary.txt`. Keys: `~/Library/Application Support/SttarkGrammar/keys.json`, readable only by your Mac account. They're not in the Keychain, because macOS ties a Keychain item to the exact build that saved it and would ask for your password after every update. `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` environment variables take priority.
 
 ### Debugging
 
-- Debug log: `open -a ~/Applications/ClaudeGrammar.app --env CG_DEBUG=1 --stderr /tmp/claude-grammar.log`. It includes the start of each paragraph checked, so delete it when you're done.
-- Log file, off by default: `defaults write com.sttark.claude-grammar logToFile -bool true`, then restart the app. Fixes and tidy-ups, including the text sent for each tidy-up check, are noted in `~/Library/Logs/ClaudeGrammar.log`, which starts over past 1 MB. `defaults delete com.sttark.claude-grammar logToFile` turns it off.
+- Debug log: `open -a /Applications/SttarkGrammar.app --env CG_DEBUG=1 --stderr /tmp/sttark-grammar.log`. It includes the start of each paragraph checked, so delete it when you're done.
+- Log file, off by default: `defaults write com.sttark.sttark-grammar logToFile -bool true`, then restart the app. Fixes and tidy-ups, including the text sent for each tidy-up check, are noted in `~/Library/Logs/SttarkGrammar.log`, which starts over past 1 MB. `defaults delete com.sttark.sttark-grammar logToFile` turns it off.
+
+## License
+
+Copyright Sttark. For use by Sttark employees. The code is public so the app can update itself; it isn't offered for use outside Sttark.
