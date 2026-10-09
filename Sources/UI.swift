@@ -93,7 +93,7 @@ struct CardView: View {
             }
             .padding(.horizontal, 8).padding(.vertical, 6)
         }
-        .frame(width: 330)
+        .frame(width: 360)
         .background(Color(nsColor: .windowBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 0.5))
@@ -202,9 +202,10 @@ struct DotCardView: View {
             if count > 0 && tidy != nil { Divider() }
             if let t = tidy {
                 row(color: Kind.tidy.color, title: "Tidy up", detail: t.summary, button: "Tidy up", action: tidyUp)
-                ScrollView {
-                    Text(preview(t)).font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading)
-                        .fixedSize(horizontal: false, vertical: true)
+                // as tall as the message, and only scrolls when it's longer than the card has room for
+                ViewThatFits(in: .vertical) {
+                    previewText(t)
+                    ScrollView { previewText(t) }
                 }
                 .frame(maxHeight: 220)
                 .padding(8)
@@ -243,6 +244,11 @@ struct DotCardView: View {
             }.buttonStyle(.plain)
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
+    }
+
+    func previewText(_ t: Tidy) -> some View {
+        Text(preview(t)).font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     /// Bold phrases shown bold.
