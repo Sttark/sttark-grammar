@@ -175,7 +175,7 @@ enum TidyChecker {
     static func check(_ text: String, model: Model) async throws -> (Tidy?, Int, Int, String) {
         let (reply, inTokens, outTokens) = try await Checker.ask(system: system, schema: schema, text: text, model: model)
         let raw = (try? JSONSerialization.data(withJSONObject: reply)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
-        guard reply["changed"] as? Bool == true, let t = reply["tidied"] as? String,
+        guard reply["changed"] as? Bool == true, let t = (reply["tidied"] as? String).map({ Diff.matchQuotes($0, like: text) }),
               t.trimmingCharacters(in: .whitespacesAndNewlines) != text.trimmingCharacters(in: .whitespacesAndNewlines) else {
             return (nil, inTokens, outTokens, raw)
         }
@@ -266,7 +266,7 @@ enum Checker {
                   let k = Kind(rawValue: d["kind"] as? String ?? ""), let r = d["reason"] as? String else { return nil }
             return (o, s, k, r)
         }
-        var issues = Diff.issues(original: text, corrected: corrected, notes: notes)
+        var issues = Diff.issues(original: text, corrected: Diff.matchQuotes(corrected, like: text), notes: notes)
         issues += Diff.unknownWords(text, notes: notes, besides: issues)
         // Claude now and then lets part of its own answer ("issues":[], "Issues: ...") leak into the corrected copy;
         // a fix that adds line breaks or that kind of text is never a real fix
@@ -322,6 +322,26 @@ enum Checker {
 /// Positions come from comparing the text with Claude's corrected copy word by word,
 /// so underlines land on exactly the right characters. Claude's own list supplies the reasons.
 enum Diff {
+    /// Claude tends to send back straight quotes (didn't) for curly ones (didn’t) or the other way round.
+    /// Give its copy the text's own style, so a quote swap is never shown as a fix.
+    static func matchQuotes(_ copy: String, like text: String) -> String {
+        let curlySingle = text.filter { $0 == "’" || $0 == "‘" }.count, straightSingle = text.filter { $0 == "'" }.count
+        let curlyDouble = text.filter { $0 == "“" || $0 == "”" }.count, straightDouble = text.filter { $0 == "\"" }.count
+        var out = "", prev: Character? = nil
+        for c in copy {
+            let opens = prev == nil || prev!.isWhitespace || "([{“‘-".contains(prev!)
+            switch c {
+            case "'" where curlySingle > straightSingle: out.append(opens ? "‘" : "’")
+            case "’", "‘" where straightSingle > curlySingle: out.append("'")
+            case "\"" where curlyDouble > straightDouble: out.append(opens ? "“" : "”")
+            case "“", "”" where straightDouble > curlyDouble: out.append("\"")
+            default: out.append(c)
+            }
+            prev = c
+        }
+        return out
+    }
+
     struct Token { let range: NSRange; let text: String; let isWord: Bool }
 
     static func isWordChar(_ c: unichar) -> Bool {
