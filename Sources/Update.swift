@@ -10,6 +10,7 @@ let supportDir: URL = {
         try? FileManager.default.moveItem(at: old, to: u)
     }
     try? FileManager.default.createDirectory(at: u, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: u.path)   // also a folder moved from the old name
     return u
 }()
 
