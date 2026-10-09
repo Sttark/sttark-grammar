@@ -17,8 +17,8 @@ enum Action: String, CaseIterable {
     var defaultShortcut: Shortcut? {
         switch self {
         case .readAloud: return Shortcut(code: 50, mods: CGEventFlags.maskCommand.rawValue, key: "`")
-        case .fixAll: return Shortcut(code: 3, mods: CGEventFlags([.maskControl, .maskAlternate]).rawValue, key: "f")
-        case .tidyUp: return Shortcut(code: 17, mods: CGEventFlags([.maskControl, .maskAlternate]).rawValue, key: "t")
+        case .fixAll: return Shortcut(code: 18, mods: CGEventFlags.maskCommand.rawValue, key: "1")
+        case .tidyUp: return Shortcut(code: 19, mods: CGEventFlags.maskCommand.rawValue, key: "2")
         case .translate: return nil
         }
     }

@@ -40,7 +40,7 @@ The app is also attached to each [release](https://github.com/Sttark/claude-gram
 - **Add to dictionary** stops a word from being flagged. Use it for names and jargon. A word saved with a capital, like Sttark, counts as a name: the app writes it that way everywhere except inside addresses like sttark.com. Edit the list with **My dictionary…** in the menu.
 - Web addresses, email addresses and file paths are never flagged.
 - A small 12-pixel dot sits in the corner of the text box, away from your text: gray and spinning while it checks, red with the number of mistakes, purple when there's a tidy-up, red with a purple corner when there are both. Hover it for a card with **Fix all** and **Tidy up**, one click each. Click the dot to keep the card open; Esc or a click anywhere else closes it.
-- **Control-Option-F** takes every fix (Fix all), and **Control-Option-T** tidies up when the dot is purple. You can change both (see Shortcuts).
+- **Command-1** takes every fix (Fix all), and **Command-2** tidies up when the dot is purple. You can change both (see Shortcuts).
 - Made-up words get fixed to Claude's best guess from the sentence, using your dictionary, or flagged as not a word if there's no guess. Add your work terms to the dictionary so the guess is right.
 
 ### Tidy up
@@ -79,6 +79,10 @@ Pick a speed under **Reading speed** in the menu: 0.75× to 2×. The model speak
 It costs about a cent per paragraph, or about 20 cents for 1,000 words, billed to your OpenAI key.
 
 ### Shortcuts
+
+The three you'll use most sit under your left hand: Command-` reads aloud, Command-1 is Fix all, Command-2 is Tidy up.
+
+![Left side of a Mac keyboard, three times: Command with `, Command with 1, and Command with 2, with the finger for each](docs/shortcuts.svg)
 
 Change the read aloud, Fix all, Tidy up and translate shortcuts under **Shortcuts** in the menu. Click one, press the new keys, and click **Save**. A shortcut needs at least one of Command, Control or Option. **No shortcut** turns one off. Translate has no shortcut until you set one.
 

@@ -1,0 +1,194 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="310" viewBox="0 0 780 310" font-family="-apple-system, Helvetica, Arial, sans-serif">
+<style>.k{fill:#f2f2f4;stroke:#c8c8cc}.on{fill:#7c4dff;stroke:#5b30d6}.l{font-size:10px;fill:#555;text-anchor:middle}.lon{font-size:11px;fill:#fff;font-weight:600;text-anchor:middle}.t{font-size:14px;font-weight:600;fill:#222}.s{font-size:12px;fill:#444}</style>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="20" y="28" class="t">Read aloud: Command-`</text>
+<rect x="20" y="40" width="52" height="24" rx="5" class="k"/>
+<text x="46" y="56" class="l">esc</text>
+<rect x="76" y="40" width="34" height="24" rx="5" class="k"/>
+<text x="92" y="56" class="l">F1</text>
+<rect x="112" y="40" width="34" height="24" rx="5" class="k"/>
+<text x="130" y="56" class="l">F2</text>
+<rect x="150" y="40" width="34" height="24" rx="5" class="k"/>
+<text x="166" y="56" class="l">F3</text>
+<rect x="186" y="40" width="34" height="24" rx="5" class="k"/>
+<text x="204" y="56" class="l">F4</text>
+<rect x="20" y="67" width="34" height="34" rx="5" class="on"/>
+<text x="37" y="88" class="lon">`</text>
+<rect x="57" y="67" width="34" height="34" rx="5" class="k"/>
+<text x="74" y="88" class="l">1</text>
+<rect x="94" y="67" width="34" height="34" rx="5" class="k"/>
+<text x="111" y="88" class="l">2</text>
+<rect x="131" y="67" width="34" height="34" rx="5" class="k"/>
+<text x="148" y="88" class="l">3</text>
+<rect x="168" y="67" width="34" height="34" rx="5" class="k"/>
+<text x="185" y="88" class="l">4</text>
+<rect x="205" y="67" width="34" height="34" rx="5" class="k"/>
+<text x="222" y="88" class="l">5</text>
+<rect x="20" y="104" width="52" height="34" rx="5" class="k"/>
+<text x="46" y="125" class="l">tab</text>
+<rect x="76" y="104" width="34" height="34" rx="5" class="k"/>
+<text x="92" y="125" class="l">Q</text>
+<rect x="112" y="104" width="34" height="34" rx="5" class="k"/>
+<text x="130" y="125" class="l">W</text>
+<rect x="150" y="104" width="34" height="34" rx="5" class="k"/>
+<text x="166" y="125" class="l">E</text>
+<rect x="186" y="104" width="34" height="34" rx="5" class="k"/>
+<text x="204" y="125" class="l">R</text>
+<rect x="20" y="141" width="62" height="34" rx="5" class="k"/>
+<text x="51" y="162" class="l">caps</text>
+<rect x="85" y="141" width="34" height="34" rx="5" class="k"/>
+<text x="102" y="162" class="l">A</text>
+<rect x="122" y="141" width="34" height="34" rx="5" class="k"/>
+<text x="139" y="162" class="l">S</text>
+<rect x="159" y="141" width="34" height="34" rx="5" class="k"/>
+<text x="176" y="162" class="l">D</text>
+<rect x="196" y="141" width="34" height="34" rx="5" class="k"/>
+<text x="213" y="162" class="l">F</text>
+<rect x="20" y="178" width="80" height="34" rx="5" class="k"/>
+<text x="60" y="199" class="l">shift</text>
+<rect x="103" y="178" width="34" height="34" rx="5" class="k"/>
+<text x="120" y="199" class="l">Z</text>
+<rect x="140" y="178" width="34" height="34" rx="5" class="k"/>
+<text x="157" y="199" class="l">X</text>
+<rect x="177" y="178" width="34" height="34" rx="5" class="k"/>
+<text x="194" y="199" class="l">C</text>
+<rect x="214" y="178" width="34" height="34" rx="5" class="k"/>
+<text x="231" y="199" class="l">V</text>
+<rect x="20" y="215" width="34" height="34" rx="5" class="k"/>
+<text x="37" y="236" class="l">fn</text>
+<rect x="57" y="215" width="38" height="34" rx="5" class="k"/>
+<text x="76" y="236" class="l">control</text>
+<rect x="98" y="215" width="38" height="34" rx="5" class="k"/>
+<text x="117" y="236" class="l">option</text>
+<rect x="138" y="215" width="56" height="34" rx="5" class="on"/>
+<text x="166" y="236" class="lon">command</text>
+<rect x="198" y="215" width="41" height="34" rx="5" class="k"/>
+<text x="20" y="268" class="s">Thumb on command, pinky on `</text>
+<text x="270" y="28" class="t">Fix all: Command-1</text>
+<rect x="270" y="40" width="52" height="24" rx="5" class="k"/>
+<text x="296" y="56" class="l">esc</text>
+<rect x="326" y="40" width="34" height="24" rx="5" class="k"/>
+<text x="342" y="56" class="l">F1</text>
+<rect x="362" y="40" width="34" height="24" rx="5" class="k"/>
+<text x="380" y="56" class="l">F2</text>
+<rect x="400" y="40" width="34" height="24" rx="5" class="k"/>
+<text x="416" y="56" class="l">F3</text>
+<rect x="436" y="40" width="34" height="24" rx="5" class="k"/>
+<text x="454" y="56" class="l">F4</text>
+<rect x="270" y="67" width="34" height="34" rx="5" class="k"/>
+<text x="287" y="88" class="l">`</text>
+<rect x="307" y="67" width="34" height="34" rx="5" class="on"/>
+<text x="324" y="88" class="lon">1</text>
+<rect x="344" y="67" width="34" height="34" rx="5" class="k"/>
+<text x="361" y="88" class="l">2</text>
+<rect x="381" y="67" width="34" height="34" rx="5" class="k"/>
+<text x="398" y="88" class="l">3</text>
+<rect x="418" y="67" width="34" height="34" rx="5" class="k"/>
+<text x="435" y="88" class="l">4</text>
+<rect x="455" y="67" width="34" height="34" rx="5" class="k"/>
+<text x="472" y="88" class="l">5</text>
+<rect x="270" y="104" width="52" height="34" rx="5" class="k"/>
+<text x="296" y="125" class="l">tab</text>
+<rect x="326" y="104" width="34" height="34" rx="5" class="k"/>
+<text x="342" y="125" class="l">Q</text>
+<rect x="362" y="104" width="34" height="34" rx="5" class="k"/>
+<text x="380" y="125" class="l">W</text>
+<rect x="400" y="104" width="34" height="34" rx="5" class="k"/>
+<text x="416" y="125" class="l">E</text>
+<rect x="436" y="104" width="34" height="34" rx="5" class="k"/>
+<text x="454" y="125" class="l">R</text>
+<rect x="270" y="141" width="62" height="34" rx="5" class="k"/>
+<text x="301" y="162" class="l">caps</text>
+<rect x="335" y="141" width="34" height="34" rx="5" class="k"/>
+<text x="352" y="162" class="l">A</text>
+<rect x="372" y="141" width="34" height="34" rx="5" class="k"/>
+<text x="389" y="162" class="l">S</text>
+<rect x="409" y="141" width="34" height="34" rx="5" class="k"/>
+<text x="426" y="162" class="l">D</text>
+<rect x="446" y="141" width="34" height="34" rx="5" class="k"/>
+<text x="463" y="162" class="l">F</text>
+<rect x="270" y="178" width="80" height="34" rx="5" class="k"/>
+<text x="310" y="199" class="l">shift</text>
+<rect x="353" y="178" width="34" height="34" rx="5" class="k"/>
+<text x="370" y="199" class="l">Z</text>
+<rect x="390" y="178" width="34" height="34" rx="5" class="k"/>
+<text x="407" y="199" class="l">X</text>
+<rect x="427" y="178" width="34" height="34" rx="5" class="k"/>
+<text x="444" y="199" class="l">C</text>
+<rect x="464" y="178" width="34" height="34" rx="5" class="k"/>
+<text x="481" y="199" class="l">V</text>
+<rect x="270" y="215" width="34" height="34" rx="5" class="k"/>
+<text x="287" y="236" class="l">fn</text>
+<rect x="307" y="215" width="38" height="34" rx="5" class="k"/>
+<text x="326" y="236" class="l">control</text>
+<rect x="348" y="215" width="38" height="34" rx="5" class="k"/>
+<text x="367" y="236" class="l">option</text>
+<rect x="388" y="215" width="56" height="34" rx="5" class="on"/>
+<text x="416" y="236" class="lon">command</text>
+<rect x="448" y="215" width="41" height="34" rx="5" class="k"/>
+<text x="270" y="268" class="s">Thumb on command, ring finger on 1</text>
+<text x="520" y="28" class="t">Tidy up: Command-2</text>
+<rect x="520" y="40" width="52" height="24" rx="5" class="k"/>
+<text x="546" y="56" class="l">esc</text>
+<rect x="576" y="40" width="34" height="24" rx="5" class="k"/>
+<text x="592" y="56" class="l">F1</text>
+<rect x="612" y="40" width="34" height="24" rx="5" class="k"/>
+<text x="630" y="56" class="l">F2</text>
+<rect x="650" y="40" width="34" height="24" rx="5" class="k"/>
+<text x="666" y="56" class="l">F3</text>
+<rect x="686" y="40" width="34" height="24" rx="5" class="k"/>
+<text x="704" y="56" class="l">F4</text>
+<rect x="520" y="67" width="34" height="34" rx="5" class="k"/>
+<text x="537" y="88" class="l">`</text>
+<rect x="557" y="67" width="34" height="34" rx="5" class="k"/>
+<text x="574" y="88" class="l">1</text>
+<rect x="594" y="67" width="34" height="34" rx="5" class="on"/>
+<text x="611" y="88" class="lon">2</text>
+<rect x="631" y="67" width="34" height="34" rx="5" class="k"/>
+<text x="648" y="88" class="l">3</text>
+<rect x="668" y="67" width="34" height="34" rx="5" class="k"/>
+<text x="685" y="88" class="l">4</text>
+<rect x="705" y="67" width="34" height="34" rx="5" class="k"/>
+<text x="722" y="88" class="l">5</text>
+<rect x="520" y="104" width="52" height="34" rx="5" class="k"/>
+<text x="546" y="125" class="l">tab</text>
+<rect x="576" y="104" width="34" height="34" rx="5" class="k"/>
+<text x="592" y="125" class="l">Q</text>
+<rect x="612" y="104" width="34" height="34" rx="5" class="k"/>
+<text x="630" y="125" class="l">W</text>
+<rect x="650" y="104" width="34" height="34" rx="5" class="k"/>
+<text x="666" y="125" class="l">E</text>
+<rect x="686" y="104" width="34" height="34" rx="5" class="k"/>
+<text x="704" y="125" class="l">R</text>
+<rect x="520" y="141" width="62" height="34" rx="5" class="k"/>
+<text x="551" y="162" class="l">caps</text>
+<rect x="585" y="141" width="34" height="34" rx="5" class="k"/>
+<text x="602" y="162" class="l">A</text>
+<rect x="622" y="141" width="34" height="34" rx="5" class="k"/>
+<text x="639" y="162" class="l">S</text>
+<rect x="659" y="141" width="34" height="34" rx="5" class="k"/>
+<text x="676" y="162" class="l">D</text>
+<rect x="696" y="141" width="34" height="34" rx="5" class="k"/>
+<text x="713" y="162" class="l">F</text>
+<rect x="520" y="178" width="80" height="34" rx="5" class="k"/>
+<text x="560" y="199" class="l">shift</text>
+<rect x="603" y="178" width="34" height="34" rx="5" class="k"/>
+<text x="620" y="199" class="l">Z</text>
+<rect x="640" y="178" width="34" height="34" rx="5" class="k"/>
+<text x="657" y="199" class="l">X</text>
+<rect x="677" y="178" width="34" height="34" rx="5" class="k"/>
+<text x="694" y="199" class="l">C</text>
+<rect x="714" y="178" width="34" height="34" rx="5" class="k"/>
+<text x="731" y="199" class="l">V</text>
+<rect x="520" y="215" width="34" height="34" rx="5" class="k"/>
+<text x="537" y="236" class="l">fn</text>
+<rect x="557" y="215" width="38" height="34" rx="5" class="k"/>
+<text x="576" y="236" class="l">control</text>
+<rect x="598" y="215" width="38" height="34" rx="5" class="k"/>
+<text x="617" y="236" class="l">option</text>
+<rect x="638" y="215" width="56" height="34" rx="5" class="on"/>
+<text x="667" y="236" class="lon">command</text>
+<rect x="698" y="215" width="41" height="34" rx="5" class="k"/>
+<text x="520" y="268" class="s">Thumb on command, middle finger on 2</text>
+<text x="20" y="298" style="font-size:12px;fill:#666">Your left hand stays where it rests: thumb on Command, one finger up to the top row. No reach for Control or Option.</text>
+</svg>
