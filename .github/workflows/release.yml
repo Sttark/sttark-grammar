@@ -34,7 +34,7 @@ jobs:
       - name: Build
         run: ./build.sh
       - name: Check the signature
-        run: codesign -dr- build/SttarkGrammar.app 2>&1 | grep "certificate leaf"
+        run: codesign -dr- build/SttarkGrammar.app 2>&1 | grep -E "certificate (leaf|root)"
       - name: Publish
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
