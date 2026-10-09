@@ -13,12 +13,13 @@ enum Kind: String {
         }
     }
 
+    /// Sttark brand status colors: red for a wrong word, yellow for grammar and capitals, blue for a tidy-up offer.
+    /// The card always says which in words too.
     var color: NSColor {
         switch self {
-        case .spelling: return NSColor(srgbRed: 0.90, green: 0.28, blue: 0.30, alpha: 1)
-        case .grammar: return NSColor(srgbRed: 0.94, green: 0.63, blue: 0.13, alpha: 1)
-        case .capitals: return NSColor(srgbRed: 0.24, green: 0.48, blue: 0.98, alpha: 1)
-        case .tidy: return NSColor(srgbRed: 0.64, green: 0.38, blue: 0.92, alpha: 1)
+        case .spelling: return Brand.red
+        case .grammar, .capitals: return Brand.yellow
+        case .tidy: return Brand.blue
         }
     }
 }
@@ -226,24 +227,13 @@ enum Checker {
         ],
     ]
 
-    static let keychainItem: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                              kSecAttrService as String: "claude-grammar",
-                                              kSecAttrAccount as String: "anthropic-api-key"]
-
     static var apiKey: String? = {
         if let k = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"], !k.isEmpty { return k }
-        var q = keychainItem
-        q[kSecReturnData as String] = true
-        var out: AnyObject?
-        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
-        return String(data: d, encoding: .utf8)
+        return Keys.get("anthropic")
     }()
 
     static func saveKey(_ key: String) -> Bool {
-        SecItemDelete(keychainItem as CFDictionary)
-        var q = keychainItem
-        q[kSecValueData as String] = Data(key.utf8)
-        guard SecItemAdd(q as CFDictionary, nil) == errSecSuccess else { return false }
+        guard Keys.set("anthropic", key) else { return false }
         apiKey = key
         return true
     }

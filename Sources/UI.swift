@@ -55,9 +55,9 @@ struct CardView: View {
             HStack(spacing: 7) {
                 Circle().fill(Color(nsColor: issue.kind.color)).frame(width: 8, height: 8)
                 Text(issue.kind.label.uppercased())
-                    .font(.system(size: 11, weight: .semibold)).tracking(0.5).foregroundStyle(.secondary)
+                    .font(.brand(11, .semibold)).tracking(0.5).foregroundStyle(.secondary)
                 Spacer()
-                Text("Claude").font(.system(size: 10)).foregroundStyle(.tertiary)
+                Text("Claude").font(.brand(10)).foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 14).padding(.top, 12)
 
@@ -68,13 +68,13 @@ struct CardView: View {
                         VStack(alignment: .leading, spacing: 6) { old; fix }
                     }
                 } else {
-                    Text(issue.original).font(.system(size: 15, weight: .semibold)).lineLimit(2)
+                    Text(issue.original).font(.brand(15, .semibold)).lineLimit(2)
                 }
             }
             .padding(.horizontal, 14).padding(.top, 10)
 
             Text(issue.reason)
-                .font(.system(size: 12)).foregroundStyle(.secondary)
+                .font(.brand(12)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 12)
 
@@ -86,7 +86,7 @@ struct CardView: View {
                 Spacer(minLength: 4)
                 if total > 1 {
                     Button(action: fixAll) {
-                        Text("Fix all \(total)").font(.system(size: 12, weight: .semibold)).foregroundStyle(Color.accentColor)
+                        Text("Fix all \(total)").font(.brand(12, .semibold)).foregroundStyle(Color(nsColor: Brand.greenText))
                             .padding(.horizontal, 6).padding(.vertical, 4).contentShape(Rectangle())
                     }.buttonStyle(.plain)
                 }
@@ -95,21 +95,21 @@ struct CardView: View {
         }
         .frame(width: 360)
         .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.12), lineWidth: 0.5))
     }
 
     var old: some View {
-        Text(issue.original).font(.system(size: 15)).strikethrough().foregroundStyle(.secondary).lineLimit(3)
+        Text(issue.original).font(.brand(15)).strikethrough().foregroundStyle(.secondary).lineLimit(3)
     }
     var arrow: some View {
-        Image(systemName: "arrow.right").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+        Image(systemName: "arrow.right").font(.brand(12, .medium)).foregroundStyle(.secondary)
     }
     var fix: some View {
         Button(action: accept) {
-            Text(issue.suggestion).font(.system(size: 14, weight: .semibold)).foregroundStyle(.white).lineLimit(3)
+            Text(issue.suggestion).font(.brand(14, .semibold)).foregroundStyle(.white).lineLimit(3)
                 .padding(.horizontal, 11).padding(.vertical, 5)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Color.accentColor))
+                .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: Brand.green)))
         }.buttonStyle(.plain)
     }
 }
@@ -125,7 +125,7 @@ struct FootButton: View {
                 Text(title).foregroundStyle(.primary)
                 if let key { Text(key).foregroundStyle(.tertiary) }
             }
-            .font(.system(size: 12))
+            .font(.brand(12))
             .padding(.horizontal, 7).padding(.vertical, 4)
             .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.05)))
             .contentShape(Rectangle())
@@ -137,7 +137,7 @@ struct FootButton: View {
 // MARK: corner badge
 
 /// The one small round dot (12 px) in the box's corner, like Grammarly's: gray and spinning while checking, red with the
-/// number of word fixes, purple when there's a tidy-up, red with a purple corner when there are both.
+/// number of word fixes, blue when there's a tidy-up, red with a blue corner when there are both.
 struct DotView: View {
     let count: Int
     let checking: Bool
@@ -152,7 +152,7 @@ struct DotView: View {
                         if count > 0 {
                             Text(count > 99 ? "99+" : "\(count)").font(.system(size: count > 9 ? 5.5 : 7.5, weight: .bold)).foregroundStyle(.white)
                         } else if tidy {
-                            Image(systemName: "wand.and.stars").font(.system(size: 6, weight: .bold)).foregroundStyle(.white)
+                            Image(systemName: "wand.and.stars").font(.brand(6, .bold)).foregroundStyle(.white)
                         } else {
                             Spinner()
                         }
@@ -197,11 +197,11 @@ struct DotCardView: View {
         VStack(alignment: .leading, spacing: 0) {
             if count > 0 {
                 row(color: Kind.spelling.color, title: "\(count) \(count == 1 ? "fix" : "fixes")", detail: "Spelling, grammar and capitals",
-                    button: "Fix all", action: fixAll)
+                    button: "Fix all", main: true, action: fixAll)
             }
             if count > 0 && tidy != nil { Divider() }
             if let t = tidy {
-                row(color: Kind.tidy.color, title: "Tidy up", detail: t.summary, button: "Tidy up", action: tidyUp)
+                row(color: Kind.tidy.color, title: "Tidy up", detail: t.summary, button: "Tidy up", main: count == 0, action: tidyUp)
                 // as tall as the message, and only scrolls when it's longer than the card has room for
                 ViewThatFits(in: .vertical) {
                     previewText(t)
@@ -213,41 +213,43 @@ struct DotCardView: View {
                 .padding(.horizontal, 10).padding(.bottom, warn ? 4 : 10)
                 if warn {
                     Text("Links and @mentions become plain text. Command-Z undoes it.")
-                        .font(.system(size: 10.5)).foregroundStyle(.secondary)
+                        .font(.brand(10.5)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 12).padding(.bottom, 10)
                 }
             }
             if count == 0 && tidy == nil {
-                Text(checking ? "Checking…" : "Nothing to fix").font(.system(size: 12)).foregroundStyle(.secondary).padding(12)
+                Text(checking ? "Checking…" : "Nothing to fix").font(.brand(12)).foregroundStyle(.secondary).padding(12)
             }
         }
         .frame(width: 340)
         .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.12), lineWidth: 0.5))
     }
 
-    func row(color: NSColor, title: String, detail: String, button: String, action: @escaping () -> Void) -> some View {
+    func row(color: NSColor, title: String, detail: String, button: String, main: Bool, action: @escaping () -> Void) -> some View {
         HStack(alignment: .center, spacing: 9) {
             Circle().fill(Color(nsColor: color)).frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 13, weight: .semibold))
+                Text(title).font(.brand(13, .semibold))
                 if !detail.isEmpty {
-                    Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    Text(detail).font(.brand(11)).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
                 }
             }
             Spacer(minLength: 6)
             Button(action: action) {
-                Text(button).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
+                // the main action is Sttark green; any other is an outline in the text color
+                Text(button).font(.brand(12, .semibold)).foregroundStyle(main ? Color.white : Color.primary)
                     .padding(.horizontal, 10).padding(.vertical, 4)
-                    .background(RoundedRectangle(cornerRadius: 5).fill(Color(nsColor: color)))
+                    .background(RoundedRectangle(cornerRadius: 6).fill(main ? Color(nsColor: Brand.green) : Color.clear))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary, lineWidth: main ? 0 : 1))
             }.buttonStyle(.plain)
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
     }
 
     func previewText(_ t: Tidy) -> some View {
-        Text(preview(t)).font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading)
+        Text(preview(t)).font(.brand(12)).frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
     }
 

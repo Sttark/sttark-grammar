@@ -215,33 +215,33 @@ struct TranslateCard: View {
             case .working:
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text("Translating with Claude…").font(.system(size: 13)).foregroundStyle(.secondary)
+                    Text("Translating with Claude…").font(.brand(13)).foregroundStyle(.secondary)
                 }
                 .padding(14)
             case .failed(let title, let msg):
-                Text(title).font(.system(size: 13, weight: .semibold)).padding([.horizontal, .top], 14)
-                Text(msg).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(title).font(.brand(13, .semibold)).padding([.horizontal, .top], 14)
+                Text(msg).font(.brand(12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 14).padding(.top, 4).padding(.bottom, 12)
                 footer
             case .done(let main, let check, let toEnglish, let replaced):
                 HStack {
                     Text(replaced ? (toEnglish ? "REPLACED WITH ENGLISH" : "REPLACED WITH CHINESE") : (toEnglish ? "ENGLISH" : "CHINESE"))
-                        .font(.system(size: 11, weight: .semibold)).tracking(0.5).foregroundStyle(.secondary)
+                        .font(.brand(11, .semibold)).tracking(0.5).foregroundStyle(.secondary)
                     Spacer()
-                    Text(replaced ? "Also copied" : "Copied").font(.system(size: 11)).foregroundStyle(.tertiary)
+                    Text(replaced ? "Also copied" : "Copied").font(.brand(11)).foregroundStyle(.tertiary)
                 }
                 .padding(.horizontal, 14).padding(.top, 12)
                 ScrollView {
-                    Text(main).font(.system(size: 15)).textSelection(.enabled)
+                    Text(main).font(.brand(15)).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxHeight: 260).fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 14).padding(.top, 6)
                 if let check {
-                    Text("Back in English, to check it:").font(.system(size: 11)).foregroundStyle(.tertiary)
+                    Text("Back in English, to check it:").font(.brand(11)).foregroundStyle(.tertiary)
                         .padding(.horizontal, 14).padding(.top, 10)
                     ScrollView {
-                        Text(check).font(.system(size: 12)).foregroundStyle(.secondary).textSelection(.enabled)
+                        Text(check).font(.brand(12)).foregroundStyle(.secondary).textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
                     }
                     .frame(maxHeight: 160).fixedSize(horizontal: false, vertical: true)
@@ -253,8 +253,8 @@ struct TranslateCard: View {
         }
         .frame(width: 380)
         .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.12), lineWidth: 0.5))
     }
 
     var footer: some View {
