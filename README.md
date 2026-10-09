@@ -82,7 +82,7 @@ It costs about a cent per paragraph, or about 20 cents for 1,000 words, billed t
 
 The three you'll use most sit under your left hand: Command-` reads aloud, Command-1 is Fix all, Command-2 is Tidy up.
 
-![A left hand on the left side of a Mac keyboard, three times: thumb on Command, index finger on `, 1 or 2](docs/shortcuts.svg)
+![A see-through left hand on the left side of a Mac keyboard, three times: thumb on Command, index finger on `, 1 or 2](docs/shortcuts.svg)
 
 Change the read aloud, Fix all, Tidy up and translate shortcuts under **Shortcuts** in the menu. Click one, press the new keys, and click **Save**. A shortcut needs at least one of Command, Control or Option. **No shortcut** turns one off. Translate has no shortcut until you set one.
 
