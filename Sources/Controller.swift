@@ -3,9 +3,11 @@ import SwiftUI
 
 let debug = ProcessInfo.processInfo.environment["CG_DEBUG"] != nil
 let started = Date()
-/// Fixes and layout changes also go to ~/Library/Logs/ClaudeGrammar.log, so a run that went wrong can be read
+/// Off unless turned on (`defaults write com.sttark.claude-grammar logToFile -bool true`): fixes and tidy-ups
+/// are noted in ~/Library/Logs/ClaudeGrammar.log, with pieces of the text, so a run that went wrong can be read
 /// afterward. The file starts over past 1 MB.
 let logFile: FileHandle? = {
+    guard UserDefaults.standard.bool(forKey: "logToFile") else { return nil }
     let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/ClaudeGrammar.log")
     if let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int, size > 1_000_000 { try? FileManager.default.removeItem(at: url) }
     if !FileManager.default.fileExists(atPath: url.path) { FileManager.default.createFile(atPath: url.path, contents: nil) }
@@ -14,11 +16,12 @@ let logFile: FileHandle? = {
 func log(_ s: @autoclosure () -> String) {
     if debug { FileHandle.standardError.write((String(format: "%7.3f ", Date().timeIntervalSince(started)) + s() + "\n").data(using: .utf8)!) }
 }
-/// Always written, to the log file: what fixes and layout changes did.
+/// What fixes and tidy-ups did: to the debug log, and to the log file when that's turned on.
 func note(_ s: String) {
     log(s)
+    guard let logFile else { return }
     let f = DateFormatter(); f.dateFormat = "MM-dd HH:mm:ss.SSS"
-    logFile?.write((f.string(from: Date()) + " " + s + "\n").data(using: .utf8)!)
+    logFile.write((f.string(from: Date()) + " " + s + "\n").data(using: .utf8)!)
 }
 
 final class Controller: NSObject, NSMenuDelegate {
