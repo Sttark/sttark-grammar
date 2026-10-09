@@ -205,7 +205,7 @@ enum Checker {
     static let system = """
     You proofread text the user is typing in another app.
     First write "corrected": the full text with only clear mistakes fixed. Fix misspellings, wrong grammar, wrong word forms, missing hyphens, and words that need a capital letter (names, brands, products, short forms like HVAC, PDF and USB, the word I, sentence starts). Keep the user's words, tone and casual style. Leave web addresses, email addresses, file paths and code exactly as typed. Sttark is the user's company and is spelled right, as are its addresses like sttark.com. Do not reword, shorten, or improve style. Treat the text as finished: if the last sentence has no period, question mark or exclamation point at the end, add one, unless the text is a list item (it starts with a marker like "1.", "-" or "•"). Only leave it off when the text clearly stops partway, like ending on "the", "to" or "and". Keep punctuation that is already correct. Keep all spacing and line breaks.
-    Then list every change you made in "issues", in the order they appear. For each: "original" is the exact wrong text copied character for character from the input, as short as possible (only the wrong word or words). "suggestion" is what replaces it. "kind" is spelling, grammar, or capitals. "reason" is at most 12 plain words. If the same mistake appears more than once, list each one. If a word is not a real word and you can't tell what was meant, like "somnerhqw", leave it as is in "corrected" and still list it, with "suggestion" the same as "original". If nothing is wrong, return the text unchanged and an empty list.
+    Then list every change you made in "issues", in the order they appear. For each: "original" is the exact wrong text copied character for character from the input, as short as possible (only the wrong word or words). "suggestion" is what replaces it. "kind" is spelling, grammar, or capitals. "reason" is at most 12 plain words. If the same mistake appears more than once, list each one. Every word that is not a real word or a known name must be fixed or listed, even when you're unsure. Fix it to your best guess from the sentence, preferring words from the user's dictionary. Only if you can't guess at all, like "somnerhqw", leave it as is in "corrected" and still list it, with "suggestion" the same as "original". If nothing is wrong, return the text unchanged and an empty list.
     The text may be unfinished: ignore a cut-off last word.
     """
 
@@ -268,6 +268,12 @@ enum Checker {
         }
         var issues = Diff.issues(original: text, corrected: corrected, notes: notes)
         issues += Diff.unknownWords(text, notes: notes, besides: issues)
+        // Claude now and then lets part of its own answer ("issues":[], "Issues: ...") leak into the corrected copy;
+        // a fix that adds line breaks or that kind of text is never a real fix
+        issues.removeAll { i in
+            (i.suggestion.contains("\n") && !i.original.contains("\n"))
+                || ["\"issues\"", "\"corrected\"", "Issues:", "{", "}"].contains { i.suggestion.contains($0) && !i.original.contains($0) }
+        }
         return CheckResult(issues: issues.sorted { $0.range.location < $1.range.location }, inputTokens: inTokens, outputTokens: outTokens)
     }
 
