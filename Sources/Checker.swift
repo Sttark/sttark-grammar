@@ -162,7 +162,7 @@ enum TidyChecker {
     - Fix clear spelling and grammar mistakes.
     - Split a paragraph that runs separate points together. In a message with several paragraphs, put a blank line between them.
     - Turn three or more separate things run together, in one sentence or across a few in a row, into a list, with every one of those things in it: a line of its own introducing the list that ends with a colon, then one item per line starting with "- ", or "1. ", "2. " when the order matters. Items start with a capital letter and have no period.
-    - Wrap in **double asterisks** only the one or two details a reader must not miss in a long message, like a deadline or a required action. None in a short or casual message.
+    - Wrap in **double asterisks** the one or two things a reader must not miss in a long message: a deadline or a required action, or else the one sentence that states the main point, so someone skimming still gets it. Bold the whole sentence or phrase, copied exactly. None in a short or casual message.
     - Keep the user's words, voice and meaning. Reword only as much as a list needs to read well. Never add, drop or soften a point. Keep greetings and sign-offs as they are.
     If the layout is already fine, return the message unchanged and set "changed" to false. "summary" says what you changed in at most 12 plain words.
     """
