@@ -47,7 +47,7 @@ For a longer message, the dot turns blue when Claude has a cleaner version: para
 
 - Claude gets the whole message once you pause, if it's at least 20 words or 3 lines. It keeps your meaning and only rewords what a list needs.
 - Tidying selects the whole message and pastes the new version over it in one go. The paste carries a formatted copy, which rich boxes like the Claude app, Slack, Asana and Gmail turn into real lists and bold, and a plain copy with "- " lines for plain boxes. Nothing is typed after, and Return is never pressed, since it would send the message in the Claude app or Slack.
-- The one or two details a reader must not miss are made bold, in boxes that keep bold.
+- The one or two things a reader must not miss are made bold, in boxes that keep bold: a deadline or a required action, or else the sentence with the main point.
 - A box that already puts space between paragraphs gets no empty lines, so they don't look doubled.
 - In rich boxes like Slack and Asana, tidying turns links and @mentions into plain text.
 - Turn it off with **Offer to tidy up** in the menu. It costs about one extra check each time you pause in a long message.
