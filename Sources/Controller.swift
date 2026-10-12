@@ -54,7 +54,18 @@ final class Controller: NSObject, NSMenuDelegate {
     var dotPinned = false                      // opened by a click: stays until a click elsewhere or Esc
     /// The tidy-up for the message as it is right now.
     var tidy: Tidy? { tidyOn && !tidyDismissed.contains(value as String) ? tidyCache[value as String] : nil }
-    var axEnabled: Set<pid_t> = []
+    /// When each app was last asked to share its text boxes (see askToShare).
+    var axAsked: [pid_t: Date] = [:]
+
+    /// Electron apps (the Claude app, Slack) show no text box to other apps until asked, and forget when they
+    /// restart, which the Claude app does by itself when it updates. An ask made while the app is still starting
+    /// doesn't take, so ask again every few seconds for as long as the app shows no text box.
+    func askToShare(_ pid: pid_t) {
+        guard pid != getpid(), Date().timeIntervalSince(axAsked[pid] ?? .distantPast) > 3 else { return }
+        if axAsked[pid] != nil { log("asked \(NSRunningApplication(processIdentifier: pid)?.localizedName ?? "?") again to share its text boxes") }
+        AX.enableAppAccessibility(pid)
+        axAsked[pid] = Date()
+    }
 
     // screen
     let overlay = makePanel(mouse: false)
@@ -252,19 +263,16 @@ final class Controller: NSObject, NSMenuDelegate {
         guard let el = AX.focused() else {
             // Electron apps (the Claude app, Slack) show no text box until asked, and forget when they restart.
             // With nothing focused there's no app to ask, so ask the one in front.
-            if let front = NSWorkspace.shared.frontmostApplication?.processIdentifier, front != getpid(), !axEnabled.contains(front) {
-                AX.enableAppAccessibility(front); axEnabled.insert(front)
-                log("nothing focused; asked \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?") to share its text boxes")
-            }
+            if let front = NSWorkspace.shared.frontmostApplication?.processIdentifier { askToShare(front) }
             reset(); updateStatus(); return
         }
         let pid = AX.pid(el)
         if pid == getpid() { return }                   // mouse is on our card; keep state
         let app = NSRunningApplication(processIdentifier: pid)
         if let id = app?.bundleIdentifier, skipped.contains(id) { reset(); updateStatus(); return }
-        if !axEnabled.contains(pid) { AX.enableAppAccessibility(pid); axEnabled.insert(pid) }
+        if axAsked[pid] == nil { askToShare(pid) }
 
-        guard isTextBox(el), let str = AX.string(el, kAXValueAttribute) else { reset(); updateStatus(); return }
+        guard isTextBox(el), let str = AX.string(el, kAXValueAttribute) else { askToShare(pid); reset(); updateStatus(); return }
         let v = str as NSString
         if element == nil || !CFEqual(element!, el) {
             element = el
