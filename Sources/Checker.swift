@@ -206,7 +206,7 @@ enum Checker {
     static let system = """
     You proofread text the user is typing in another app.
     First write "corrected": the full text with only clear mistakes fixed. Fix misspellings, wrong grammar, wrong word forms, missing hyphens, and words that need a capital letter (names, brands, products, short forms like HVAC, PDF and USB, the word I, sentence starts). Keep the user's words, tone and casual style. Leave web addresses, email addresses, file paths and code exactly as typed. Sttark is the user's company and is spelled right, as are its addresses like sttark.com. Do not reword, shorten, or improve style. Treat the text as finished: if the last sentence has no period, question mark or exclamation point at the end, add one, unless the text is a list item (it starts with a marker like "1.", "-" or "•"). Only leave it off when the text clearly stops partway, like ending on "the", "to" or "and". Keep punctuation that is already correct. Keep all spacing and line breaks.
-    Then list every change you made in "issues", in the order they appear. For each: "original" is the exact wrong text copied character for character from the input, as short as possible (only the wrong word or words). "suggestion" is what replaces it. "kind" is spelling, grammar, or capitals. "reason" is at most 12 plain words. If the same mistake appears more than once, list each one. Every word that is not a real word or a known name must be fixed or listed, even when you're unsure. Fix it to your best guess from the sentence, preferring words from the user's dictionary. Only if you can't guess at all, like "somnerhqw", leave it as is in "corrected" and still list it, with "suggestion" the same as "original". If nothing is wrong, return the text unchanged and an empty list.
+    Then list every change you made in "issues", in the order they appear. For each: "original" is the exact wrong text copied character for character from the input, as short as possible (only the wrong word or words). "suggestion" is what replaces it. "kind" is spelling, grammar, or capitals. "reason" is at most 12 plain words. If the same mistake appears more than once, list each one. Every word that is not a real word or a known name must be fixed or listed, even when you're unsure. Fix it to your best guess from the sentence, preferring words from the user's dictionary. Only if you can't guess at all, like "somnerhqw", leave it as is in "corrected" and still list it, with "suggestion" the same as "original". Never list a word that is spelled right, including names of companies, products, apps and people (Asana, Onshape, Pantone); a word you would leave unchanged is not a mistake. If nothing is wrong, return the text unchanged and an empty list.
     The text may be unfinished: ignore a cut-off last word.
     """
 
@@ -257,7 +257,11 @@ enum Checker {
             return (o, s, k, r)
         }
         var issues = Diff.issues(original: text, corrected: Diff.matchQuotes(corrected, like: text), notes: notes)
-        issues += Diff.unknownWords(text, notes: notes, besides: issues)
+        // a "not a word" flag for a word the Mac's own spell checker knows (Asana, which Claude once flagged with
+        // the reason "placeholder") is never shown
+        let unknown = Diff.unknownWords(text, notes: notes, besides: issues)
+        let known = await MainActor.run { Set(unknown.map(\.original).filter(Diff.macKnows)) }
+        issues += unknown.filter { !known.contains($0.original) }
         // Claude now and then lets part of its own answer ("issues":[], "Issues: ...") leak into the corrected copy;
         // a fix that adds line breaks or that kind of text is never a real fix
         issues.removeAll { i in
@@ -415,18 +419,27 @@ enum Diff {
 
     /// Words Claude marked as not real and had no fix for ("somnerhqw"). They aren't in the corrected copy's
     /// changes, so they're found in the text by name. Addresses are skipped.
+    /// The Mac's spell checker knows this word, in any of the user's languages. Main thread only.
+    @MainActor static func macKnows(_ word: String) -> Bool {
+        let c = NSSpellChecker.shared
+        c.automaticallyIdentifiesLanguages = true
+        return c.checkSpelling(of: word, startingAt: 0).location == NSNotFound
+    }
+
     static func unknownWords(_ text: String, notes: [(String, String, Kind, String)], besides found: [Issue]) -> [Issue] {
         let ns = text as NSString
         let links = links(in: text)
         var out: [Issue] = []
-        for (o, s, _, reason) in notes where o == s && !o.isEmpty && !o.contains(" ") {
+        for (o, s, _, _) in notes where o == s && !o.isEmpty && !o.contains(" ") {
             let pattern = "(?<![\\p{L}\\p{N}])" + NSRegularExpression.escapedPattern(for: o) + "(?![\\p{L}\\p{N}])"
             guard let re = try? NSRegularExpression(pattern: pattern) else { continue }
             for m in re.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
                 let r = m.range
                 if (found + out).contains(where: { NSIntersectionRange($0.range, r).length > 0 }) { continue }
                 if links.contains(where: { NSIntersectionRange($0, r).length > 0 }) { continue }
-                out.append(Issue(range: r, original: o, suggestion: o, kind: .spelling, reason: reason))
+                // the card says what this flag means, not whatever Claude wrote (once just "placeholder")
+                out.append(Issue(range: r, original: o, suggestion: o, kind: .spelling,
+                                 reason: "Not a word Claude knows, and it has no guess. If it's right, add it to your dictionary."))
             }
         }
         return out
