@@ -18,13 +18,61 @@ enum AX {
     static func focused() -> AXUIElement? {
         // Asking across all apps sometimes fails (the Claude app after a restart); then ask the app in front.
         var v = attr(system, kAXFocusedUIElementAttribute)
-        if v == nil, let front = NSWorkspace.shared.frontmostApplication?.processIdentifier {
-            v = attr(AXUIElementCreateApplication(front), kAXFocusedUIElementAttribute)
+        let front = NSWorkspace.shared.frontmostApplication
+        if v == nil, let front {
+            v = attr(AXUIElementCreateApplication(front.processIdentifier), kAXFocusedUIElementAttribute)
         }
+        if v == nil, let front, isBrowserWebApp(front) { return focusedByLooking(front.processIdentifier) }
         guard let v, CFGetTypeID(v) == AXUIElementGetTypeID() else { return nil }
         let el = v as! AXUIElement
         AXUIElementSetMessagingTimeout(el, 0.25)
         return el
+    }
+
+    /// A site installed as an app from Chrome or Edge (Google Chat), which runs in its own process.
+    static func isBrowserWebApp(_ app: NSRunningApplication) -> Bool {
+        let id = app.bundleIdentifier ?? ""
+        return ["com.google.Chrome.app.", "com.microsoft.edgemac.app.", "com.brave.Browser.app."].contains { id.hasPrefix($0) }
+    }
+
+    /// Those apps' windows never say which box has focus, though the box itself says it's focused. So look
+    /// through the window for it (about a tenth of a second for Google Chat), off the main thread so typing
+    /// isn't held up, at most once a second, and keep the box for as long as it stays focused.
+    private static var found: AXUIElement?
+    private static var looking = false
+    private static var lastLook = Date.distantPast
+
+    static func focusedByLooking(_ pid: pid_t) -> AXUIElement? {
+        if let f = found, self.pid(f) == pid, attr(f, kAXFocusedAttribute) as? Bool == true { return f }
+        found = nil
+        guard !looking, Date().timeIntervalSince(lastLook) > 1 else { return nil }
+        looking = true
+        lastLook = Date()
+        DispatchQueue.global(qos: .userInitiated).async {
+            let hit = lookForFocusedText(AXUIElementCreateApplication(pid))
+            DispatchQueue.main.async {
+                found = hit
+                looking = false
+                if let hit { AXUIElementSetMessagingTimeout(hit, 0.25) }
+            }
+        }
+        return nil
+    }
+
+    private static func lookForFocusedText(_ app: AXUIElement) -> AXUIElement? {
+        var seen = 0
+        let leaves: Set<String> = ["AXStaticText", "AXImage", "AXButton", "AXLink", "AXPopUpButton", "AXCheckBox"]
+        func walk(_ e: AXUIElement, _ depth: Int) -> AXUIElement? {
+            seen += 1
+            guard seen < 6000, depth < 60 else { return nil }
+            let role = string(e, kAXRoleAttribute) ?? ""
+            if (role == "AXTextArea" || role == "AXTextField") && attr(e, kAXFocusedAttribute) as? Bool == true { return e }
+            if leaves.contains(role) { return nil }
+            for c in (attr(e, kAXChildrenAttribute) as? [AXUIElement]) ?? [] { if let hit = walk(c, depth + 1) { return hit } }
+            return nil
+        }
+        for w in (attr(app, kAXWindowsAttribute) as? [AXUIElement]) ?? [] { if let hit = walk(w, 0) { return hit } }
+        return nil
     }
 
     static func pid(_ el: AXUIElement) -> pid_t {
