@@ -1125,8 +1125,33 @@ final class Controller: NSObject, NSMenuDelegate {
                         seen = "; box shows \(now.substring(with: NSRange(location: a, length: max(0, b - a))).debugDescription), wanted \((expected as NSString).substring(with: NSRange(location: a, length: max(0, min(b, (expected as NSString).length) - a))).debugDescription), selection \(self.selection(el).map { "\($0)" } ?? "nil") for \(i.range)"
                     }
                     note("fix '\(i.original)' -> '\(i.suggestion)' \(ok ? "went in by paste" : "pasted but the box didn't show it")\(seen)")
-                    done(ok)
+                    // Chrome sometimes takes a paste and drops it (seen in a docs.sttark.com comment box). With the text
+                    // unchanged, select the word again and type the fix, the way a person would. A fix has no line
+                    // break in it, so Return is never pressed.
+                    guard !ok, AX.string(el, kAXValueAttribute) == cur as String, !i.suggestion.contains("\n") else { return done(ok) }
+                    self.select(el, i.range, expect: i.original) { selected in
+                        guard selected else { return done(false) }
+                        Self.typeText(i.suggestion)
+                        Self.wait(until: { AX.string(el, kAXValueAttribute) == expected as String }) { typed in
+                            note("fix '\(i.original)' -> '\(i.suggestion)' \(typed ? "went in by typing" : "typed but the box didn't show it either")")
+                            done(typed)
+                        }
+                    }
                 }
+            }
+        }
+    }
+
+    /// Types text as key presses carrying the characters; an empty string presses Delete to clear the selection.
+    static func typeText(_ text: String) {
+        let src = CGEventSource(stateID: .combinedSessionState)
+        if text.isEmpty { return key(51, []) }
+        let units = Array(text.utf16)
+        for chunk in stride(from: 0, to: units.count, by: 16).map({ Array(units[$0..<min($0 + 16, units.count)]) }) {
+            for down in [true, false] {
+                let e = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: down)
+                chunk.withUnsafeBufferPointer { e?.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: $0.baseAddress) }
+                e?.post(tap: .cghidEventTap)
             }
         }
     }
