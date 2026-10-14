@@ -43,13 +43,63 @@ struct Issue {
     }
 }
 
-enum Model: String, CaseIterable {
-    case haiku = "claude-haiku-4-5"
-    case sonnet = "claude-sonnet-5"
+/// A Claude model from the two lower tiers (Haiku and Sonnet). The menu offers the newest two of each that
+/// the API lists (refreshed daily), so a new Haiku or Sonnet shows up without an app update.
+struct Model: RawRepresentable, Hashable {
+    let rawValue: String
+    init?(rawValue: String) {
+        guard rawValue.hasPrefix("claude-haiku-") || rawValue.hasPrefix("claude-sonnet-") else { return nil }
+        self.rawValue = rawValue
+    }
 
-    var label: String { self == .sonnet ? "Sonnet 5 (slower, twice the cost)" : "Haiku 4.5 (fast)" }
-    // dollars per million tokens, input and output
-    var price: (Double, Double) { self == .sonnet ? (2, 10) : (1, 5) }
+    static let haiku = Model(rawValue: "claude-haiku-4-5")!   // the default until Haiku 5.5 tidies up as well
+    static let sonnet = Model(rawValue: "claude-sonnet-5-5")!
+    /// Shown until the first list arrives from the API, and if it can't be reached.
+    static var available: [Model] = ["claude-haiku-5-5", "claude-haiku-4-5", "claude-sonnet-5-5", "claude-sonnet-5"].compactMap(Model.init)
+
+    var isSonnet: Bool { rawValue.hasPrefix("claude-sonnet-") }
+    /// "5.5" from "claude-haiku-5-5"; a date on the end (older ids) is left off.
+    var version: String { rawValue.split(separator: "-").dropFirst(2).filter { $0.count < 8 }.joined(separator: ".") }
+    var number: Double { Double(version) ?? 0 }
+    var label: String { "\(isSonnet ? "Sonnet" : "Haiku") \(version)\(isSonnet ? " (slower, smarter)" : " (fast)")" }
+
+    /// Dollars per million tokens, input and output, for the cost in the menu.
+    var price: (Double, Double) {
+        switch rawValue {
+        case "claude-haiku-5-5": return (0.10, 0.50)
+        case _ where rawValue.hasPrefix("claude-haiku-4"): return (1, 5)
+        case "claude-sonnet-4-6": return (3, 15)
+        case _ where isSonnet: return (2, 10)
+        default: return (1, 5)
+        }
+    }
+
+    /// Fast, thinking-free requests. Each generation takes this differently: Sonnet 5.5 refuses
+    /// "disabled" and uses "between_tools" instead; Haiku 5.5 and Sonnet 5 take "disabled" at low effort;
+    /// Haiku 4.5 doesn't think unless asked and has no effort setting.
+    func settings(_ body: inout [String: Any], _ outputConfig: inout [String: Any]) {
+        if rawValue.hasPrefix("claude-haiku-4") { return }
+        outputConfig["effort"] = "low"
+        body["thinking"] = ["type": isSonnet && number >= 5.5 ? "between_tools" : "disabled"]
+    }
+
+    /// The newest two Haiku and newest two Sonnet models from the API's list, newest first within each.
+    static func refresh(key: String) async {
+        var req = URLRequest(url: URL(string: "https://api.anthropic.com/v1/models?limit=100")!)
+        req.setValue(key, forHTTPHeaderField: "x-api-key")
+        req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        guard let (data, _) = try? await URLSession.shared.data(for: req),
+              let list = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["data"] as? [[String: Any]] else { return }
+        // ids like claude-haiku-4-5-20251001 also answer to claude-haiku-4-5; keep the short form
+        let ids = list.compactMap { $0["id"] as? String }.map { id -> String in
+            let parts = id.split(separator: "-")
+            return parts.last.map { $0.count == 8 && Int($0) != nil } == true ? parts.dropLast().joined(separator: "-") : id
+        }
+        let models = ids.compactMap(Model.init)
+        let pick = { (sonnet: Bool) in Array(models.filter { $0.isSonnet == sonnet }.sorted { $0.number > $1.number }.prefix(2)) }
+        let fresh = pick(false) + pick(true)
+        if fresh.count >= 2 { await MainActor.run { available = fresh } }
+    }
 }
 
 /// Claude's tidied-up copy of a whole message, as lines to put in the box.
@@ -288,10 +338,7 @@ enum Checker {
             "system": system,
             "messages": [["role": "user", "content": "<text>\n\(text)\n</text>"]],
         ]
-        if model == .sonnet {
-            outputConfig["effort"] = "low"
-            body["thinking"] = ["type": "disabled"]
-        }
+        model.settings(&body, &outputConfig)
         body["output_config"] = outputConfig
 
         var req = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)

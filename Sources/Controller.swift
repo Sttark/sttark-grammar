@@ -155,6 +155,10 @@ final class Controller: NSObject, NSMenuDelegate {
         installKeyTap()
         updater.changed = { [weak self] in self?.updateStatus() }
         updater.start()
+        // the newest Haiku and Sonnet models, now and once a day
+        let refreshModels = { Task { if let k = Checker.apiKey { await Model.refresh(key: k) } } }
+        _ = refreshModels()
+        Timer.scheduledTimer(withTimeInterval: 86400, repeats: true) { _ in _ = refreshModels() }
         timer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in self?.tick() }
         RunLoop.main.add(timer!, forMode: .common)
         speaker.changed = { [weak self] in self?.updateStatus() }
@@ -1368,7 +1372,7 @@ final class Controller: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
         let models = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
         let sub = NSMenu()
-        for m in Model.allCases {
+        for m in Model.available + (Model.available.contains(model) ? [] : [model]) {
             let i = NSMenuItem(title: m.label, action: #selector(pickModel(_:)), keyEquivalent: "")
             i.target = self
             i.representedObject = m.rawValue
