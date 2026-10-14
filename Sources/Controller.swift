@@ -646,6 +646,13 @@ final class Controller: NSObject, NSMenuDelegate {
         case "tab": if let id = hoverID { accept(id) }
         case "esc": if let id = hoverID { ignore(id) }
         case "fixall": fixAll()
+        case "tryfix":
+            // debug: fix the first "<word>" to "<fix>" by the same steps a click on a card takes
+            if w.count >= 3 {
+                let word = w[1], fix = w[2].trimmingCharacters(in: .whitespacesAndNewlines)
+                let r = value.range(of: word)
+                if r.location != NSNotFound { replace([Issue(range: r, original: word, suggestion: fix, kind: .grammar, reason: "test")]) }
+            }
         case "tidyreplace": applyTidy()
         case "dothover": fakeMouse = CGPoint(x: badge.frame.midX, y: badge.frame.midY)
         case "dotclick": clickDot()
