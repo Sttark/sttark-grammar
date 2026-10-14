@@ -50,6 +50,16 @@ final class Controller: NSObject, NSMenuDelegate {
     var tidyChecked: Set<String> = []          // messages already sent, with or without a tidy-up
     var tidyInflight: String?
     var tidyDismissed: Set<String> = []
+    /// Apps whose box drops bold from a paste (the Claude app's chat box has no bold). Tidy-ups there leave bold out.
+    var noBold: Set<String> {
+        get { Set(defaults.stringArray(forKey: "noBold") ?? ["com.anthropic.claudefordesktop"]) }
+        set { defaults.set(Array(newValue), forKey: "noBold") }
+    }
+    /// The same words and lines, ignoring blank lines and spaces at the ends of lines.
+    static func sameText(_ a: String, _ b: String) -> Bool {
+        let n = { (x: String) in x.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
+        return n(a) == n(b)
+    }
     var dotCardOpen = false
     var dotPinned = false                      // opened by a click: stays until a click elsewhere or Esc
     /// The tidy-up for the message as it is right now.
@@ -821,12 +831,20 @@ final class Controller: NSObject, NSMenuDelegate {
         let text = displayText(el)
         note("tidy check in \(appName) with \(model.rawValue): \(words) words, \(lines) lines, sent \(String(text.prefix(2000)).debugDescription)")
         let m = model
+        let plainBox = noBold.contains(appID)
         Task {
             do {
-                let (t, inTokens, outTokens, raw) = try await TidyChecker.check(text, model: m)
+                let (got, inTokens, outTokens, raw) = try await TidyChecker.check(text, model: m)
                 await MainActor.run {
                     self.tidyInflight = nil
                     self.tidyChecked.insert(key)
+                    // where bold can't stick, leave it out, and offer nothing if bold was the only change
+                    var t = got
+                    if plainBox, var x = t {
+                        x.bold = []
+                        // (this box doesn't show its blank lines to other apps, so they don't count as a change)
+                        t = Self.sameText(x.plain(blankLines: true), text) ? nil : x
+                    }
                     if let t { self.tidyCache[key] = t }
                     self.recordUsage(CheckResult(issues: [], inputTokens: inTokens, outputTokens: outTokens), model: m)
                     note("tidy got \(t.map { "\($0.lines.count) lines, \($0.bold.count) bold" } ?? "nothing") | Claude said \(raw.prefix(1500))")
@@ -930,6 +948,12 @@ final class Controller: NSObject, NSMenuDelegate {
                         let changed = AX.string(el, kAXValueAttribute) != before
                         note("tidy paste didn't land as text\(changed ? "; undoing" : "")")
                         if changed { Self.key(6, .maskCommand) }            // Command-Z
+                        // nothing showed because the only change was bold, which this box drops: stop offering it
+                        if !changed && !t.bold.isEmpty {
+                            self.noBold.insert(self.appID)
+                            self.tidyDismissed.insert(self.value as String)
+                            note("tidy: \(self.appName) drops bold; tidy-ups there leave it out from now on")
+                        }
                     }
                     self.refresh(el)
                     // A box that started as one paragraph couldn't be measured before. If an empty line now
