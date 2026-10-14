@@ -54,6 +54,10 @@ final class Controller: NSObject, NSMenuDelegate {
     var dotPinned = false                      // opened by a click: stays until a click elsewhere or Esc
     /// The tidy-up for the message as it is right now.
     var tidy: Tidy? { tidyOn && !tidyDismissed.contains(value as String) ? tidyCache[value as String] : nil }
+    /// Apps whose text box quietly undid a fix made through Accessibility; fixes there are pasted instead.
+    var pasteOnly: Set<String> = []
+    var appID: String { NSRunningApplication(processIdentifier: element.map(AX.pid) ?? 0)?.bundleIdentifier ?? appName }
+
     /// When each app was last asked to share its text boxes (see askToShare).
     var axAsked: [pid_t: Date] = [:]
 
@@ -727,7 +731,7 @@ final class Controller: NSObject, NSMenuDelegate {
 
 
     /// Apply fixes from last to first so earlier positions stay valid.
-    func replace(_ all: [Issue], then: (() -> Void)? = nil) {
+    func replace(_ all: [Issue], retry: Bool = true, then: (() -> Void)? = nil) {
         let list = all.filter(\.hasFix)
         guard let el = element, !list.isEmpty, !editing else { then?(); return }
         editing = true
@@ -761,6 +765,7 @@ final class Controller: NSObject, NSMenuDelegate {
             log("fixes done")
             updateStatus()
             then?()
+            stillThere(list.filter { !failed.contains($0.id) }, before: before, after: after, el: el, retry: retry)
         }
 
         func next() {
@@ -772,6 +777,35 @@ final class Controller: NSObject, NSMenuDelegate {
             }
         }
         next()
+    }
+
+    /// Some boxes (the Claude app, once) take a fix and then quietly put their own copy of the text back.
+    /// A second later, look for each fix by the words around it. One that's been undone is put in again, once,
+    /// by pasting, and fixes in that app are pasted from then on.
+    func stillThere(_ applied: [Issue], before: NSString, after: NSString, el: AXUIElement, retry: Bool) {
+        guard !applied.isEmpty else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self, let cur = self.element, CFEqual(cur, el), !self.editing,
+                  let later = AX.string(el, kAXValueAttribute) as NSString? else { return }
+            if later == after { note("fix all in \(self.appName): all \(applied.count) still in a second later"); return }
+            let text = later as String
+            var undone: [Issue] = []
+            for i in applied {
+                let a = max(0, i.range.location - 12), b = min(before.length, i.range.upperBound + 12)
+                let left = before.substring(with: NSRange(location: a, length: i.range.location - a))
+                let right = before.substring(with: NSRange(location: i.range.upperBound, length: b - i.range.upperBound))
+                let r = later.range(of: left + i.original + right)
+                guard r.location != NSNotFound, !text.contains(left + i.suggestion + right) else { continue }
+                undone.append(Issue(range: NSRange(location: r.location + (left as NSString).length, length: i.range.length),
+                                    original: i.original, suggestion: i.suggestion, kind: i.kind, reason: i.reason))
+            }
+            guard !undone.isEmpty else { return }
+            note("fix all in \(self.appName): the box undid \(undone.count) of \(applied.count): \(undone.map(\.original).joined(separator: ", ")); pasting fixes here from now on")
+            self.pasteOnly.insert(self.appID)
+            self.value = later
+            self.issues = self.issues.filter { i in !undone.contains { NSIntersectionRange($0.range, i.range).length > 0 } } + undone
+            if retry { self.replace(undone, retry: false) } else { self.showSaved(); self.updateStatus() }
+        }
     }
 
     // MARK: tidy up
@@ -1008,11 +1042,12 @@ final class Controller: NSObject, NSMenuDelegate {
             log("found '\(at)' instead of '\(i.original)' in \(appName); skipping")
             done(false); return
         }
-        select(el, i.range)
-        let ok = AX.setSelectedText(el, i.suggestion)
+        let direct = !pasteOnly.contains(appID)
+        if direct { select(el, i.range) }
+        let ok = direct && AX.setSelectedText(el, i.suggestion)
         DispatchQueue.main.asyncAfter(deadline: .now() + (ok ? 0.03 : 0)) {
             let now = AX.string(el, kAXValueAttribute) ?? ""
-            if now == expected { done(true); return }
+            if now == expected { note("fix '\(i.original)' -> '\(i.suggestion)' went in directly"); done(true); return }
             guard now == cur as String else { done(false); return }
             self.select(el, i.range, expect: i.original) { ok in
                 guard ok else {
@@ -1025,7 +1060,10 @@ final class Controller: NSObject, NSMenuDelegate {
 
         func pasteFix() {
             paste(i.suggestion) {
-                Self.wait(until: { AX.string(el, kAXValueAttribute) == expected as String }) { done($0) }
+                Self.wait(until: { AX.string(el, kAXValueAttribute) == expected as String }) { ok in
+                    note("fix '\(i.original)' -> '\(i.suggestion)' \(ok ? "went in by paste" : "pasted but the box didn't show it")")
+                    done(ok)
+                }
             }
         }
     }
