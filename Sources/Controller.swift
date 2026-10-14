@@ -502,6 +502,11 @@ final class Controller: NSObject, NSMenuDelegate {
 
     // MARK: screen positions
 
+    /// Every edge within a pixel and a half: the same spot, give or take Chrome's rounding.
+    static func nearlySame(_ a: CGRect, _ b: CGRect) -> Bool {
+        abs(a.minX - b.minX) <= 1.5 && abs(a.minY - b.minY) <= 1.5 && abs(a.maxX - b.maxX) <= 1.5 && abs(a.maxY - b.maxY) <= 1.5
+    }
+
     func layout(_ el: AXUIElement) {
         guard let axFrame = AX.frame(el) else { overlay.orderOut(nil); badge.orderOut(nil); return }
         let frame = AX.toCocoa(axFrame)
@@ -523,7 +528,12 @@ final class Controller: NSObject, NSMenuDelegate {
         if rects.isEmpty {
             overlay.orderOut(nil)
         } else {
-            let win = visible.insetBy(dx: -2, dy: -2)
+            // Chrome can report a box's edge a pixel off every other time (seen 8 times a second); a layer that
+            // followed it jiggled the text under it. Move only for a real change.
+            var win = visible.insetBy(dx: -2, dy: -2)
+            if overlay.isVisible && Self.nearlySame(overlay.frame, win) && rects.values.joined().allSatisfy({ overlay.frame.contains($0) }) {
+                win = overlay.frame
+            }
             if overlay.frame != win { overlay.setFrame(win, display: false) }
             underlines.marks = issues.compactMap { i in
                 rects[i.id].map { rs in (rs.map { $0.offsetBy(dx: -win.minX, dy: -win.minY) }, i.kind.color, i.id == hoverID) }
@@ -589,7 +599,7 @@ final class Controller: NSObject, NSMenuDelegate {
         let screen = NSScreen.screens.first { $0.frame.intersects(frame) }?.visibleFrame ?? frame
         let area = frame.intersection(screen).isNull ? frame : frame.intersection(screen)
         let f = badgeSpot(size, area: area, box: frame, screen: screen, el)
-        if badge.frame != f { badge.setFrame(f, display: true) }
+        if badge.frame != f && !(badge.isVisible && Self.nearlySame(badge.frame, f)) { badge.setFrame(f, display: true) }
         if !badge.isVisible { badge.orderFrontRegardless() }
     }
 
