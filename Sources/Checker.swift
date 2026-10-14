@@ -159,9 +159,10 @@ struct Tidy {
 enum TidyChecker {
     static let system = """
     You tidy up the layout of a message the user is typing in another app, so it's easier to read. Return the whole message in "tidied".
+    Work in two steps. First correct the words. Then decide the layout from the corrected message, as if it had been typed that way, and apply every rule below. A spelling fix is never the whole job when the layout rules call for more.
     - Fix clear spelling and grammar mistakes, in American spelling (judgment, color, organize), the same as the spell check.
     - Split a paragraph that runs separate points together. In a message with several paragraphs, put a blank line between them.
-    - Turn three or more separate things run together, in one sentence or across a few in a row, into a list, with every one of those things in it: a line of its own introducing the list that ends with a colon, then one item per line starting with "- ", or "1. ", "2. " when the order matters. Items start with a capital letter and have no period.
+    - Turn three or more separate things run together, in one sentence or across a few in a row (three or more questions in a row count), into a list, with every one of those things in it: a line of its own introducing the list that ends with a colon, then one item per line starting with "- ", or "1. ", "2. " when the order matters. Items start with a capital letter and have no period.
     - Wrap in **double asterisks** the one or two things a reader must not miss in a long message: a deadline or a required action, or else the one sentence that states the main point, so someone skimming still gets it. Bold the whole sentence or phrase, copied exactly. None in a short or casual message.
     - Keep the user's words, voice and meaning. Reword only as much as a list needs to read well. Never add, drop or soften a point. Keep greetings and sign-offs as they are.
     If the layout is already fine, return the message unchanged and set "changed" to false. "summary" says what you changed in at most 12 plain words.
@@ -176,8 +177,13 @@ enum TidyChecker {
     static func check(_ text: String, model: Model) async throws -> (Tidy?, Int, Int, String) {
         let (reply, inTokens, outTokens) = try await Checker.ask(system: system, schema: schema, text: text, model: model)
         let raw = (try? JSONSerialization.data(withJSONObject: reply)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        // a bullet the box shows as "•" and Claude writes as "-" is the same layout, not a change to offer
+        let same = { (x: String) in x.components(separatedBy: "\n").map { line -> String in
+            let l = line.trimmingCharacters(in: .whitespaces)
+            return l.hasPrefix("• ") ? "- " + l.dropFirst(2) : l
+        }.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines) }
         guard reply["changed"] as? Bool == true, let t = (reply["tidied"] as? String).map({ Diff.matchQuotes($0, like: text) }),
-              t.trimmingCharacters(in: .whitespacesAndNewlines) != text.trimmingCharacters(in: .whitespacesAndNewlines) else {
+              same(t) != same(text) else {
             return (nil, inTokens, outTokens, raw)
         }
         let tidy = Tidy(t, summary: reply["summary"] as? String ?? "")
