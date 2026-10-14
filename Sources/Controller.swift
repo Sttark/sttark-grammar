@@ -562,8 +562,21 @@ final class Controller: NSObject, NSMenuDelegate {
         return lines
     }
 
+    /// When the app last changed the text itself (Fix all, Tidy up, a single fix).
+    var lastOwnEdit = Date.distantPast
+
+    /// The dot spins while a paragraph or the whole message is being checked, and in the pause after Fix all
+    /// or Tidy up before the tidy-up check of the new text goes out, so there's no still gap before it appears.
+    var isChecking: Bool {
+        if tidyInflight != nil || paragraphs(value).contains(where: { inflight.contains($0.1) }) { return true }
+        let key = value as String
+        let words = key.split(whereSeparator: \.isWhitespace).count, lines = key.split(separator: "\n").count
+        let tidyDue = tidyOn && !tidyChecked.contains(key) && value.length <= 8000 && (words >= 20 || lines >= 3)
+        return tidyDue && Date().timeIntervalSince(lastOwnEdit) < 4
+    }
+
     func placeBadge(_ frame: CGRect, _ el: AXUIElement) {
-        let checking = paragraphs(value).contains { inflight.contains($0.1) }
+        let checking = isChecking
         let count = issues.count
         let tidyNow = tidy != nil
         guard count > 0 || checking || tidyNow else { badge.orderOut(nil); return }
@@ -659,7 +672,7 @@ final class Controller: NSObject, NSMenuDelegate {
     func showDotCard(pinned: Bool) {
         if dotCardOpen { dotPinned = dotPinned || pinned; return }
         hideCard()
-        let checking = paragraphs(value).contains { inflight.contains($0.1) } || tidyInflight != nil
+        let checking = isChecking
         let rich = element.map { !AX.children($0).isEmpty } ?? false
         let view = DotCardView(count: issues.filter(\.hasFix).count, checking: checking, tidy: tidy, warn: rich,
                                fixAll: { [weak self] in self?.hideCard(); self?.fixAll() },
@@ -771,6 +784,7 @@ final class Controller: NSObject, NSMenuDelegate {
                 select(el, NSRange(location: max(0, loc), length: 0))
             }
             lastChange = Date()
+            lastOwnEdit = Date()
             editing = false
             log("fixes done")
             updateStatus()
@@ -930,6 +944,7 @@ final class Controller: NSObject, NSMenuDelegate {
         func finish(_ ok: Bool) {
             refresh(el)
             lastChange = Date()
+            lastOwnEdit = Date()
             editing = false
             note(ok ? "tidy up done" : "tidy up didn't go in")
             updateStatus()
