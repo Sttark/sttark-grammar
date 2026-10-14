@@ -395,9 +395,14 @@ enum Diff {
     }
 
     /// Web and email addresses and file paths: docs.sttark.com, dan@sttark.com, ~/src/app. Nothing in them gets flagged.
+    /// Web and email addresses, paths, and @mentions with the name after them ("@Kevin MacDonald"): never flagged.
     static func links(in s: String) -> [NSRange] {
-        (try? NSRegularExpression(pattern: #"\S*(?:://|@|/)\S*|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\b"#))?
-            .matches(in: s, range: NSRange(location: 0, length: (s as NSString).length)).map(\.range) ?? []
+        let all = NSRange(location: 0, length: (s as NSString).length)
+        let addresses = (try? NSRegularExpression(pattern: #"\S*(?:://|@|/)\S*|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\b"#))?
+            .matches(in: s, range: all).map(\.range) ?? []
+        let mentions = (try? NSRegularExpression(pattern: #"(?<![\p{L}\p{N}.])@[\p{L}][\p{L}'’.-]*(?:[ \u00A0]+\p{Lu}[\p{L}'’.-]*){0,3}"#))?
+            .matches(in: s, range: all).map(\.range) ?? []
+        return addresses + mentions
     }
 
     static let abbreviations: Set<String> = ["e.g", "i.e", "etc", "vs", "approx", "a.m", "p.m", "fig", "mr", "mrs", "ms", "dr", "st"]
