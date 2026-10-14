@@ -1110,7 +1110,14 @@ final class Controller: NSObject, NSMenuDelegate {
         func pasteFix() {
             paste(i.suggestion) {
                 Self.wait(until: { AX.string(el, kAXValueAttribute) == expected as String }) { ok in
-                    note("fix '\(i.original)' -> '\(i.suggestion)' \(ok ? "went in by paste" : "pasted but the box didn't show it")")
+                    var seen = ""
+                    if !ok {
+                        // what the box shows around the spot, and what was selected, to tell a wrong spot from a paste that didn't take
+                        let now = (AX.string(el, kAXValueAttribute) ?? "") as NSString
+                        let a = max(0, i.range.location - 15), b = min(now.length, i.range.upperBound + 15)
+                        seen = "; box shows \(now.substring(with: NSRange(location: a, length: max(0, b - a))).debugDescription), wanted \((expected as NSString).substring(with: NSRange(location: a, length: max(0, min(b, (expected as NSString).length) - a))).debugDescription), selection \(self.selection(el).map { "\($0)" } ?? "nil") for \(i.range)"
+                    }
+                    note("fix '\(i.original)' -> '\(i.suggestion)' \(ok ? "went in by paste" : "pasted but the box didn't show it")\(seen)")
                     done(ok)
                 }
             }
