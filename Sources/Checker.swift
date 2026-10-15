@@ -260,6 +260,13 @@ enum TidyChecker {
         }.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines) }
         guard reply["changed"] as? Bool == true, let t = (reply["tidied"] as? String).map({ keepWords(Diff.matchQuotes($0, like: text), from: text, words: words) }),
               same(t) != same(text) else {
+            // Now and then Claude calls a long one-paragraph message fine as it is, and splits the same text the
+            // next time (1 in 27 on a 120-word message). Ask once more before saying there's nothing to tidy.
+            let oneParagraph = !text.trimmingCharacters(in: .whitespacesAndNewlines).contains("\n")
+            if second, oneParagraph, text.split(whereSeparator: \.isWhitespace).count >= 60,
+               let (again, i2, o2, raw2) = try? await check(text, model: model, words: words, second: false) {
+                return (again, inTokens + i2, outTokens + o2, raw + " | asked again: " + raw2)
+            }
             return (nil, inTokens, outTokens, raw)
         }
         let tidy = Tidy(t, summary: reply["summary"] as? String ?? "")
