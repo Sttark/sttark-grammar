@@ -872,9 +872,10 @@ final class Controller: NSObject, NSMenuDelegate {
         note("tidy check in \(appName) with \(model.rawValue): \(words) words, \(lines) lines, sent \(String(text.prefix(2000)).debugDescription)")
         let m = model
         let plainBox = noBold.contains(appID)
+        let known = dictionary.map { w in names.first { $0.lowercased() == w } ?? w }.sorted()
         Task {
             do {
-                let (got, inTokens, outTokens, raw) = try await TidyChecker.check(text, model: m)
+                let (got, inTokens, outTokens, raw) = try await TidyChecker.check(text, model: m, words: known)
                 await MainActor.run {
                     self.tidyInflight = nil
                     self.tidyChecked.insert(key)

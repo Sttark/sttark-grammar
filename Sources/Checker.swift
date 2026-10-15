@@ -223,16 +223,42 @@ enum TidyChecker {
         "properties": ["changed": ["type": "boolean"], "tidied": ["type": "string"], "summary": ["type": "string"]],
     ]
 
+    /// A dictionary word the text has (Sttark) that came back a letter off (Stark) is put back as the text spells it.
+    static func keepWords(_ tidied: String, from text: String, words: [String]) -> String {
+        let lower = Set(words.map { $0.lowercased() })
+        let wordRe = try! NSRegularExpression(pattern: #"[\p{L}][\p{L}'’-]*"#)
+        let found = { (s: String) in wordRe.matches(in: s, range: NSRange(location: 0, length: (s as NSString).length)).map { (s as NSString).substring(with: $0.range) } }
+        let mine = found(text).filter { lower.contains($0.lowercased()) && $0.count >= 4 }
+        guard !mine.isEmpty else { return tidied }
+        let had = Set(found(text).map { $0.lowercased() })
+        func oneOff(_ a: String, _ b: String) -> Bool {
+            let x = Array(a.lowercased()), y = Array(b.lowercased())
+            if x == y || abs(x.count - y.count) > 1 { return false }
+            var i = 0, j = 0, edits = 0
+            while i < x.count && j < y.count { if x[i] == y[j] { i += 1; j += 1 } else { edits += 1; if x.count > y.count { i += 1 } else if y.count > x.count { j += 1 } else { i += 1; j += 1 } } }
+            return edits + (x.count - i) + (y.count - j) <= 1
+        }
+        let out = NSMutableString(string: tidied)
+        for m in wordRe.matches(in: tidied, range: NSRange(location: 0, length: out.length)).reversed() {
+            let w = out.substring(with: m.range)
+            guard !had.contains(w.lowercased()), let mineWord = mine.first(where: { oneOff($0, w) }) else { continue }
+            // the dictionary's spelling, with its capitals for a name (Sttark), else as typed
+            out.replaceCharacters(in: m.range, with: words.first { $0.lowercased() == mineWord.lowercased() } ?? mineWord)
+        }
+        return out as String
+    }
+
     /// nil when there's nothing to tidy. Also returns Claude's answer as it came, for the log.
-    static func check(_ text: String, model: Model) async throws -> (Tidy?, Int, Int, String) {
-        let (reply, inTokens, outTokens) = try await Checker.ask(system: system, schema: schema, text: text, model: model)
+    static func check(_ text: String, model: Model, words: [String] = []) async throws -> (Tidy?, Int, Int, String) {
+        let sys = words.isEmpty ? system : system + "\nThe user's dictionary. These are spelled right, so never change their letters, but write each one as it's written here, with its capital letters: " + words.prefix(500).joined(separator: ", ")
+        let (reply, inTokens, outTokens) = try await Checker.ask(system: sys, schema: schema, text: text, model: model)
         let raw = (try? JSONSerialization.data(withJSONObject: reply)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
         // a bullet the box shows as "•" and Claude writes as "-" is the same layout, not a change to offer
         let same = { (x: String) in x.components(separatedBy: "\n").map { line -> String in
             let l = line.trimmingCharacters(in: .whitespaces)
             return l.hasPrefix("• ") ? "- " + l.dropFirst(2) : l
         }.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines) }
-        guard reply["changed"] as? Bool == true, let t = (reply["tidied"] as? String).map({ Diff.matchQuotes($0, like: text) }),
+        guard reply["changed"] as? Bool == true, let t = (reply["tidied"] as? String).map({ keepWords(Diff.matchQuotes($0, like: text), from: text, words: words) }),
               same(t) != same(text) else {
             return (nil, inTokens, outTokens, raw)
         }
