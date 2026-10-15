@@ -55,9 +55,11 @@ final class Controller: NSObject, NSMenuDelegate {
         get { Set(defaults.stringArray(forKey: "noBold") ?? ["com.anthropic.claudefordesktop"]) }
         set { defaults.set(Array(newValue), forKey: "noBold") }
     }
-    /// The same words and lines, ignoring blank lines and spaces at the ends of lines.
+    /// The same words and lines, ignoring blank lines, bullet symbols and spaces at the ends of lines.
     static func sameText(_ a: String, _ b: String) -> Bool {
-        let n = { (x: String) in x.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
+        // a "•" the box shows and a "-" Claude writes are the same bullet
+        let n = { (x: String) in x.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            .map { $0.hasPrefix("• ") ? "- " + $0.dropFirst(2) : $0 } }
         return n(a) == n(b)
     }
     var dotCardOpen = false
