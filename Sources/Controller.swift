@@ -506,9 +506,9 @@ final class Controller: NSObject, NSMenuDelegate {
 
     // MARK: screen positions
 
-    /// Every edge within a pixel and a half: the same spot, give or take Chrome's rounding.
-    static func nearlySame(_ a: CGRect, _ b: CGRect) -> Bool {
-        abs(a.minX - b.minX) <= 1.5 && abs(a.minY - b.minY) <= 1.5 && abs(a.maxX - b.maxX) <= 1.5 && abs(a.maxY - b.maxY) <= 1.5
+    /// Every edge within d points (a pixel and a half unless asked): the same spot, give or take a twitch.
+    static func nearlySame(_ a: CGRect, _ b: CGRect, by d: CGFloat = 1.5) -> Bool {
+        abs(a.minX - b.minX) <= d && abs(a.minY - b.minY) <= d && abs(a.maxX - b.maxX) <= d && abs(a.maxY - b.maxY) <= d
     }
 
     func layout(_ el: AXUIElement) {
@@ -534,8 +534,12 @@ final class Controller: NSObject, NSMenuDelegate {
         } else {
             // Chrome can report a box's edge a pixel off every other time (seen 8 times a second); a layer that
             // followed it jiggled the text under it. Move only for a real change.
-            var win = visible.insetBy(dx: -2, dy: -2)
-            if overlay.isVisible && Self.nearlySame(overlay.frame, win) && rects.values.joined().allSatisfy({ overlay.frame.contains($0) }) {
+            // The layer gets a roomy area that stays put while the box only twitches: Claude's chat box reported
+            // its edges moving 2 to 8 px several times a second, and a layer that followed jiggled the text under
+            // it. It moves when the box really moves (over 20 px) or a line would fall outside it.
+            var win = visible.insetBy(dx: -14, dy: -14)
+            if overlay.isVisible && Self.nearlySame(overlay.frame.insetBy(dx: 12, dy: 12), visible, by: 20)
+                && rects.values.joined().allSatisfy({ overlay.frame.contains($0) }) {
                 win = overlay.frame
             }
             if overlay.frame != win { overlay.setFrame(win, display: false) }
@@ -603,7 +607,8 @@ final class Controller: NSObject, NSMenuDelegate {
         let screen = NSScreen.screens.first { $0.frame.intersects(frame) }?.visibleFrame ?? frame
         let area = frame.intersection(screen).isNull ? frame : frame.intersection(screen)
         let f = badgeSpot(size, area: area, box: frame, screen: screen, el)
-        if badge.frame != f && !(badge.isVisible && Self.nearlySame(badge.frame, f)) { badge.setFrame(f, display: true) }
+        // the dot follows a real change, like a new line of text, not the box's few-pixel twitches
+        if badge.frame != f && !(badge.isVisible && Self.nearlySame(badge.frame, f, by: 8)) { badge.setFrame(f, display: true) }
         if !badge.isVisible { badge.orderFrontRegardless() }
     }
 
