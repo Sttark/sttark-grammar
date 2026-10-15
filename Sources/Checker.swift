@@ -212,7 +212,7 @@ enum TidyChecker {
     Work in two steps. First correct the words. Then decide the layout from the corrected message, as if it had been typed that way, and apply every rule below. A spelling fix is never the whole job when the layout rules call for more.
     - Fix clear spelling and grammar mistakes, in American spelling (judgment, color, organize), the same as the spell check.
     - Split a paragraph that runs separate points together. In a message with several paragraphs, put a blank line between them.
-    - Turn three or more separate things run together, in one sentence or across a few in a row (three or more questions in a row count), into a list, with every one of those things in it: a line of its own introducing the list that ends with a colon, then one item per line starting with "- ", or "1. ", "2. " when the order matters. Items start with a capital letter and have no period.
+    - Count the separate things the message lists, asks for or asks about. Three or more, whether in one sentence (a request naming four things to cover counts) or across a few in a row (three or more questions in a row count), always become a list; this is not a judgment call, with every one of those things in it: a line of its own introducing the list that ends with a colon, then one item per line starting with "- ", or "1. ", "2. " when the order matters. Items start with a capital letter and have no period.
     - Wrap in **double asterisks** the one or two things a reader must not miss in a long message: a deadline or a required action, or else the one sentence that states the main point, so someone skimming still gets it. Bold the whole sentence or phrase, copied exactly. None in a short or casual message.
     - Keep the user's words, voice and meaning. Reword only as much as a list needs to read well. Never add, drop or soften a point. Keep greetings and sign-offs as they are.
     If the layout is already fine, return the message unchanged and set "changed" to false. "summary" says what you changed in at most 12 plain words.
@@ -249,7 +249,7 @@ enum TidyChecker {
     }
 
     /// nil when there's nothing to tidy. Also returns Claude's answer as it came, for the log.
-    static func check(_ text: String, model: Model, words: [String] = []) async throws -> (Tidy?, Int, Int, String) {
+    static func check(_ text: String, model: Model, words: [String] = [], second: Bool = true) async throws -> (Tidy?, Int, Int, String) {
         let sys = words.isEmpty ? system : system + "\nThe user's dictionary. These are spelled right, so never change their letters, but write each one as it's written here, with its capital letters: " + words.prefix(500).joined(separator: ", ")
         let (reply, inTokens, outTokens) = try await Checker.ask(system: sys, schema: schema, text: text, model: model)
         let raw = (try? JSONSerialization.data(withJSONObject: reply)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
@@ -263,7 +263,19 @@ enum TidyChecker {
             return (nil, inTokens, outTokens, raw)
         }
         let tidy = Tidy(t, summary: reply["summary"] as? String ?? "")
-        return (tidy.lines.isEmpty ? nil : tidy, inTokens, outTokens, raw)
+        guard !tidy.lines.isEmpty else { return (nil, inTokens, outTokens, raw) }
+        // A typo can keep Claude from seeing the layout: it fixes the word and leaves four points run together,
+        // then lists them on the next press. When the first answer only fixed words, ask once more about the
+        // corrected text, so one press does both.
+        let lines = { (x: String) in x.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }.count }
+        if second, lines(t) == lines(text), !tidy.lines.contains(where: { $0.marker != nil }) {
+            if let (again, i2, o2, raw2) = try? await check(t, model: model, words: words, second: false), let again {
+                var merged = again
+                merged.summary = [tidy.summary, again.summary].filter { !$0.isEmpty }.joined(separator: " ")
+                return (merged, inTokens + i2, outTokens + o2, raw + " | then " + raw2)
+            }
+        }
+        return (tidy, inTokens, outTokens, raw)
     }
 }
 
