@@ -635,9 +635,13 @@ final class Controller: NSObject, NSMenuDelegate {
             badge.contentView = ClickThroughHostingView(rootView: DotView(count: count, checking: checking, tidy: tidyNow, done: done, layoutFine: layoutFine) { [weak self] in self?.clickDot() })
         }
         let size = badge.contentView!.fittingSize
-        let screen = NSScreen.screens.first { $0.frame.intersects(frame) }?.visibleFrame ?? frame
+        let display = NSScreen.screens.first { $0.frame.intersects(frame) }
+        let screen = display?.visibleFrame ?? frame
+        // the whole screen below the menu bar: a hidden Dock's strip at the bottom still counts (the Claude app's
+        // box sits in it)
+        let room = display.map { CGRect(x: $0.frame.minX, y: $0.frame.minY, width: $0.frame.width, height: $0.visibleFrame.maxY - $0.frame.minY) } ?? screen
         let area = frame.intersection(screen).isNull ? frame : frame.intersection(screen)
-        let f = badgeSpot(size, area: area, box: frame, screen: screen, el)
+        let f = badgeSpot(size, area: area, box: frame, screen: room, el)
         // the dot follows a real change, like a new line of text, not the box's few-pixel twitches
         if badge.frame != f && !(badge.isVisible && Self.nearlySame(badge.frame, f, by: 8)) { badge.setFrame(f, display: true) }
         if !badge.isVisible { badge.orderFrontRegardless() }
@@ -687,10 +691,11 @@ final class Controller: NSObject, NSMenuDelegate {
     }
 
     /// Where the dot lives in this box, chosen once when the box gets focus and kept while you type, so the dot
-    /// never moves under your hands: just outside the box, where text can't reach. Above the top-right corner when
-    /// buttons sit along the box (the Claude app's mic and send), else below the bottom-right corner; either way off
-    /// buttons and on screen.
-    enum DotHome { case above, below }
+    /// never moves under your hands: just outside the box, where text can't reach. Right beside the box at its bottom
+    /// line when there's room (Google Chat, before its send button); else below the bottom-right corner; above the
+    /// top-right corner when buttons sit along the box (the Claude app's mic and send) or there's no room below.
+    /// Always off buttons and on screen.
+    enum DotHome { case beside, above, below }
     var dotHomeFor: AXUIElement?
     var dotHome: DotHome = .below
 
@@ -700,15 +705,23 @@ final class Controller: NSObject, NSMenuDelegate {
         let above = CGRect(x: box.maxX - size.width, y: box.maxY + 2, width: size.width, height: size.height)
         let below = CGRect(x: box.maxX - size.width, y: box.minY - size.height - 2, width: size.width, height: size.height)
         let fits = { (r: CGRect) in screen.contains(r) && clear(r) }
+        // just right of the box, level with its bottom line (Google Chat: between the box and its send button)
+        let line = min(box.height, 28)
+        let beside = CGRect(x: box.maxX, y: box.minY + (line - size.height) / 2, width: size.width, height: size.height)
         let same = dotHomeFor.map { CFEqual($0, el) } ?? false
         // decide once per box, after the buttons around it are known
         if !same && Date().timeIntervalSince(buttonsAt) < 3 && buttonsFor.map({ CFEqual($0, el) }) == true {
             let alongBox = buttons.contains { $0.insetBy(dx: -3, dy: -3).intersects(box) }
-            dotHome = !alongBox && fits(below) ? .below : fits(above) ? .above : .below
+            let besideFits = screen.contains(beside) && !buttons.contains { $0.intersects(beside.insetBy(dx: 3, dy: 3)) }
+            dotHome = besideFits && !alongBox ? .beside : !alongBox && fits(below) ? .below : fits(above) ? .above : .below
             dotHomeFor = el
             if debug { log("dot home for this box: \(dotHome) (buttons along the box: \(alongBox))") }
         }
-        return (same || dotHomeFor.map({ CFEqual($0, el) }) == true ? dotHome : (fits(below) ? .below : .above)) == .above ? above : below
+        switch same || dotHomeFor.map({ CFEqual($0, el) }) == true ? dotHome : (fits(below) ? .below : .above) {
+        case .beside: return beside
+        case .above: return above
+        case .below: return below
+        }
     }
 
     // MARK: hover card
