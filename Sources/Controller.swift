@@ -692,8 +692,19 @@ final class Controller: NSObject, NSMenuDelegate {
     /// never moves under your hands. In a box with room for several lines (an email), inside its bottom-right corner.
     /// In a one-line box, right beside it, level with the line you're typing (Google Chat, before its format
     /// buttons). Else below the bottom-right corner; above the top-right corner when buttons sit along the box
-    /// (the Claude app's mic and send) or there's no room below. Always off buttons and on screen.
+    /// (the Claude app's mic and send) or there's no room below. Always off buttons, on screen and inside the app's window.
     enum DotHome { case beside, corner, above, below }
+
+    /// The frame of the window holding the box (Cocoa coordinates), asked once per box.
+    var windowFor: AXUIElement?
+    var windowRect: CGRect?
+
+    func windowFrame(_ el: AXUIElement) -> CGRect? {
+        if let w = windowFor, CFEqual(w, el) { return windowRect }
+        windowFor = el
+        windowRect = AX.attr(el, kAXWindowAttribute).flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? AX.frame($0 as! AXUIElement) : nil }.map(AX.toCocoa)
+        return windowRect
+    }
 
     /// Where the last line of text sits (Cocoa coordinates), asked once per text and box position.
     var lastLineKey = ""
@@ -716,7 +727,9 @@ final class Controller: NSObject, NSMenuDelegate {
         let clear = { (r: CGRect) in !buttons.contains { $0.insetBy(dx: -3, dy: -3).intersects(r) } }
         let above = CGRect(x: box.maxX - size.width, y: box.maxY + 2, width: size.width, height: size.height)
         let below = CGRect(x: box.maxX - size.width, y: box.minY - size.height - 2, width: size.width, height: size.height)
-        let fits = { (r: CGRect) in screen.contains(r) && clear(r) }
+        // inside the app's own window too (Messages: below its box is the window's bottom edge)
+        let win = windowFrame(el).map { $0.insetBy(dx: -2, dy: -2) } ?? screen
+        let fits = { (r: CGRect) in screen.contains(r) && win.contains(r) && clear(r) }
         // a box with room for several lines (an email, an Asana description): inside its bottom-right corner,
         // where the text reaches last
         let tall = box.height > 60
@@ -729,7 +742,7 @@ final class Controller: NSObject, NSMenuDelegate {
         // decide once per box, after the buttons around it are known
         if !same && Date().timeIntervalSince(buttonsAt) < 3 && buttonsFor.map({ CFEqual($0, el) }) == true {
             let alongBox = buttons.contains { $0.insetBy(dx: -3, dy: -3).intersects(box) }
-            let besideFits = screen.contains(beside) && !buttons.contains { $0.intersects(beside.insetBy(dx: 3, dy: 3)) }
+            let besideFits = screen.contains(beside) && win.contains(beside) && !buttons.contains { $0.intersects(beside.insetBy(dx: 3, dy: 3)) }
             dotHome = tall && fits(corner) ? .corner
                 : !tall && besideFits && !alongBox ? .beside
                 : !alongBox && fits(below) ? .below : fits(above) ? .above : .below
