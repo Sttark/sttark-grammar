@@ -16,12 +16,13 @@ enum AX {
     }
 
     static func focused() -> AXUIElement? {
-        // test hook: with CG_DEBUG set, a process id in /tmp/cg-follow is watched as if it were in front, so a test
-        // can type into a window behind the one you're using
-        if debug, let s = try? String(contentsOfFile: "/tmp/cg-follow", encoding: .utf8), let p = pid_t(s.trimmingCharacters(in: .whitespacesAndNewlines)) {
-            if let app = NSRunningApplication(processIdentifier: p), isBrowserWebApp(app) { return focusedByLooking(p) }
-            guard let v = attr(AXUIElementCreateApplication(p), kAXFocusedUIElementAttribute), CFGetTypeID(v) == AXUIElementGetTypeID() else { return nil }
-            return (v as! AXUIElement)
+        // test hook: with CG_DEBUG set, /tmp/cg-follow holds a process id and a class name a test put on a box
+        // (in the Chrome window named Claude), and that box is watched as if it had focus, so a test can type
+        // into a window behind the one you're using
+        if debug, let s = try? String(contentsOfFile: "/tmp/cg-follow", encoding: .utf8) {
+            let w = s.split(whereSeparator: \.isWhitespace).map(String.init)
+            guard w.count == 2, let p = pid_t(w[0]) else { return nil }
+            return followed(p, w[1])
         }
         // Asking across all apps sometimes fails (the Claude app after a restart); then ask the app in front.
         var v = attr(system, kAXFocusedUIElementAttribute)
@@ -34,6 +35,29 @@ enum AX {
         let el = v as! AXUIElement
         AXUIElementSetMessagingTimeout(el, 0.25)
         return el
+    }
+
+    private static var follow: (key: String, el: AXUIElement)?
+    private static var followLook = Date.distantPast
+
+    static func followed(_ p: pid_t, _ cls: String) -> AXUIElement? {
+        let key = "\(p) \(cls)"
+        if let f = follow, f.key == key, (attr(f.el, "AXDOMClassList") as? [String])?.contains(cls) == true { return f.el }
+        follow = nil
+        guard Date().timeIntervalSince(followLook) > 1 else { return nil }
+        followLook = Date()
+        var seen = 0
+        func walk(_ e: AXUIElement, _ depth: Int) -> AXUIElement? {
+            seen += 1
+            guard seen < 40000, depth < 80 else { return nil }
+            if (attr(e, "AXDOMClassList") as? [String])?.contains(cls) == true { return e }
+            for c in (attr(e, kAXChildrenAttribute) as? [AXUIElement]) ?? [] { if let hit = walk(c, depth + 1) { return hit } }
+            return nil
+        }
+        for w in (attr(AXUIElementCreateApplication(p), kAXWindowsAttribute) as? [AXUIElement]) ?? [] {
+            if let hit = walk(w, 0) { AXUIElementSetMessagingTimeout(hit, 0.25); follow = (key, hit); return hit }
+        }
+        return nil
     }
 
     /// A site installed as an app from Chrome or Edge (Google Chat), which runs in its own process.
