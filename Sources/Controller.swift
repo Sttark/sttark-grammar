@@ -296,6 +296,8 @@ final class Controller: NSObject, NSMenuDelegate {
         let v = str as NSString
         if element == nil || !CFEqual(element!, el) {
             element = el
+            wasChecking = false                  // a green "done" belongs to checks in this box only
+            doneAt = .distantPast
             boxMapFor = nil
             runsNeeded = false
             runsFor = nil
