@@ -170,11 +170,11 @@ struct DotView: View {
             }
             .overlay {
                 if checking && (count > 0 || tidy) { Ring() }
-                else if layoutFine && count > 0 { Circle().stroke(Color(nsColor: Brand.green), lineWidth: 1.6).frame(width: 16.5, height: 16.5) }
+                else if layoutFine && count > 0 { Circle().stroke(Color(nsColor: Brand.green), lineWidth: 1.6).frame(width: 17, height: 17) }
             }
         }
         .buttonStyle(.plain)
-        // room for the whole ring (16.5 pt plus its stroke) so its edge isn't cut off by the window
+        // room for the whole ring (17 pt plus its stroke) so its edge isn't cut off by the window
         .padding(4)
     }
 
@@ -188,12 +188,16 @@ struct DotView: View {
 
 /// A thin arc that turns around the dot: a check is still running behind a red number or a blue tidy-up.
 struct Ring: View {
-    var size: CGFloat = 16.5
+    // 17, not 16.5: centering needs the ring to start (17 - 12) / 2 = 2.5 pt outside the 12 pt dot, a half point the
+    // screen can place exactly; 16.5 meant 2.25, rounded to 2, and the ring sat a quarter point low and right
+    var size: CGFloat = 17
     var body: some View {
         TimelineView(.animation) { ctx in
             ZStack {
-                Circle().stroke(Color.gray.opacity(0.25), lineWidth: 1.6)
-                Circle().trim(from: 0, to: 0.3).stroke(Color.gray, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+                // a full, clearly visible track, so it reads as one circle around the dot, and a short bright
+                // part turning on it (a faint track left only a crescent, which made the dot look off center)
+                Circle().stroke(Color.gray.opacity(0.7), lineWidth: 1.6)
+                Circle().trim(from: 0, to: 0.18).stroke(Color.primary, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
                     .rotationEffect(.degrees(ctx.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.1) / 1.1 * 360))
             }
             .frame(width: size, height: size)
@@ -206,7 +210,7 @@ struct Spinner: View {
     var body: some View {
         TimelineView(.animation) { ctx in
             Circle().trim(from: 0, to: 0.7).stroke(Color.white, style: StrokeStyle(lineWidth: 1.4, lineCap: .round))
-                .frame(width: 6.5, height: 6.5)
+                .frame(width: 7, height: 7)   // (12 - 7) / 2 = 2.5 pt: on the half-point grid, so it stays centered
                 .rotationEffect(.degrees(ctx.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 0.9) / 0.9 * 360))
         }
     }

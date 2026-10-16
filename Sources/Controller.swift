@@ -637,7 +637,7 @@ final class Controller: NSObject, NSMenuDelegate {
         let size = badge.contentView!.fittingSize
         let screen = NSScreen.screens.first { $0.frame.intersects(frame) }?.visibleFrame ?? frame
         let area = frame.intersection(screen).isNull ? frame : frame.intersection(screen)
-        let f = badgeSpot(size, area: area, box: frame, screen: screen, el)
+        let f = clearOfButtons(badgeSpot(size, area: area, box: frame, screen: screen, el), box: frame, area: area, screen: screen, el)
         // the dot follows a real change, like a new line of text, not the box's few-pixel twitches
         if badge.frame != f && !(badge.isVisible && Self.nearlySame(badge.frame, f, by: 8)) { badge.setFrame(f, display: true) }
         if !badge.isVisible { badge.orderFrontRegardless() }
@@ -645,6 +645,62 @@ final class Controller: NSObject, NSMenuDelegate {
 
     /// Somewhere the buttons don't cover the text you're typing: to the right of the last line if there's room,
     /// else in the empty space under the text, else just outside the box (below it, or above if there's no room).
+    /// Buttons around the box (the Claude app's mic and send buttons sit inside its chat box), found in the
+    /// background every 2 seconds so the dot never covers one.
+    var buttonsFor: AXUIElement?
+    var buttonFrames: [CGRect] = []
+    var buttonsAt = Date.distantPast
+    var buttonsLooking = false
+
+    func nearbyButtons(_ el: AXUIElement, box: CGRect) -> [CGRect] {
+        let same = buttonsFor.map { CFEqual($0, el) } ?? false
+        if !buttonsLooking && (!same || Date().timeIntervalSince(buttonsAt) > 2) {
+            buttonsLooking = true
+            DispatchQueue.global(qos: .userInitiated).async {
+                // a few levels up from the box, then every button below that sits near it
+                var top = el
+                for _ in 0..<4 { if let p = AX.attr(top, kAXParentAttribute), CFGetTypeID(p) == AXUIElementGetTypeID() { top = p as! AXUIElement } }
+                let near = box.insetBy(dx: -40, dy: -40)
+                var found: [CGRect] = [], seen = 0
+                let roles: Set<String> = ["AXButton", "AXPopUpButton", "AXMenuButton", "AXCheckBox", "AXRadioButton"]
+                func walk(_ e: AXUIElement, _ depth: Int) {
+                    seen += 1
+                    guard seen < 600, depth < 10 else { return }
+                    if roles.contains(AX.string(e, kAXRoleAttribute) ?? ""), let f = AX.frame(e) {
+                        let r = AX.toCocoa(f)
+                        if r.intersects(near) && r.width < 200 && r.height < 120 { found.append(r) }
+                        return
+                    }
+                    for c in AX.children(e) { walk(c, depth + 1) }
+                }
+                walk(top, 0)
+                DispatchQueue.main.async {
+                    if found != self.buttonFrames || !same { log("buttons near the box: \(found.map { "\(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height))" })") }
+                    self.buttonsFor = el
+                    self.buttonFrames = found
+                    self.buttonsAt = Date()
+                    self.buttonsLooking = false
+                }
+            }
+        }
+        return same ? buttonFrames : []
+    }
+
+    /// Slide the dot left past any button it would cover; with no room in the box, put it under (or over) the box.
+    func clearOfButtons(_ spot: CGRect, box: CGRect, area: CGRect, screen: CGRect, _ el: AXUIElement) -> CGRect {
+        let buttons = nearbyButtons(el, box: box)
+        var r = spot
+        for _ in 0..<8 {
+            guard let hit = buttons.first(where: { $0.insetBy(dx: -3, dy: -3).intersects(r) }) else { return r }
+            r.origin.x = hit.minX - r.width - 4
+            if r.minX < area.minX + 4 { break }
+        }
+        if !buttons.contains(where: { $0.insetBy(dx: -3, dy: -3).intersects(r) }) && r.minX >= area.minX + 4 { return r }
+        let below = CGRect(x: box.maxX - spot.width, y: box.minY - spot.height - 2, width: spot.width, height: spot.height)
+        if below.minY >= screen.minY && !buttons.contains(where: { $0.intersects(below) }) { return below }
+        return CGRect(x: box.maxX - spot.width, y: box.maxY + 2, width: spot.width, height: spot.height)
+    }
+
     func badgeSpot(_ size: CGSize, area: CGRect, box: CGRect, screen: CGRect, _ el: AXUIElement) -> CGRect {
         let corner = CGRect(x: area.maxX - size.width - 4, y: area.minY + 4, width: size.width, height: size.height)
         guard value.length > 0 else { return corner }
