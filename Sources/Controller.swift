@@ -598,7 +598,7 @@ final class Controller: NSObject, NSMenuDelegate {
     var tidyEligible: Bool {
         let key = Diff.flattenTags(value as String)
         let words = key.split(whereSeparator: \.isWhitespace).count, lines = key.split(separator: "\n").count
-        return tidyOn && value.length <= 8000 && (words >= 20 || lines >= 3)
+        return tidyOn && value.length <= 8000 && (words >= 3 || lines >= 3)
     }
     /// You've paused long enough that the checks are about to go out (they go at 2 s): show it from 0.6 s on.
     var paused: Bool { Date().timeIntervalSince(lastChange) > 0.6 || Date().timeIntervalSince(lastOwnEdit) < 4 }
@@ -900,7 +900,7 @@ final class Controller: NSObject, NSMenuDelegate {
         let flat = Diff.flattenTags(key)
         let words = flat.split(whereSeparator: \.isWhitespace).count
         let lines = flat.split(separator: "\n").count
-        guard words >= 20 || lines >= 3 else { return }
+        guard words >= 3 || lines >= 3 else { return }   // the same floor as the spell check
         // A paste can't put a tag back, only text. With a tag in the middle there's nowhere to paste around it.
         if !Diff.tags(in: value).isEmpty && !Diff.tagsAtStart(value) {
             tidyChecked.insert(key)
