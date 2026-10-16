@@ -16,6 +16,13 @@ enum AX {
     }
 
     static func focused() -> AXUIElement? {
+        // test hook: with CG_DEBUG set, a process id in /tmp/cg-follow is watched as if it were in front, so a test
+        // can type into a window behind the one you're using
+        if debug, let s = try? String(contentsOfFile: "/tmp/cg-follow", encoding: .utf8), let p = pid_t(s.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            if let app = NSRunningApplication(processIdentifier: p), isBrowserWebApp(app) { return focusedByLooking(p) }
+            guard let v = attr(AXUIElementCreateApplication(p), kAXFocusedUIElementAttribute), CFGetTypeID(v) == AXUIElementGetTypeID() else { return nil }
+            return (v as! AXUIElement)
+        }
         // Asking across all apps sometimes fails (the Claude app after a restart); then ask the app in front.
         var v = attr(system, kAXFocusedUIElementAttribute)
         let front = NSWorkspace.shared.frontmostApplication

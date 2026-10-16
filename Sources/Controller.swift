@@ -715,7 +715,7 @@ final class Controller: NSObject, NSMenuDelegate {
             let besideFits = screen.contains(beside) && !buttons.contains { $0.intersects(beside.insetBy(dx: 3, dy: 3)) }
             dotHome = besideFits && !alongBox ? .beside : !alongBox && fits(below) ? .below : fits(above) ? .above : .below
             dotHomeFor = el
-            if debug { log("dot home for this box: \(dotHome) (buttons along the box: \(alongBox))") }
+            if debug { log("dot home for this box: \(dotHome) (buttons along the box: \(alongBox)) box \(box) dot \(size) room \(screen) beside fits \(besideFits) below fits \(fits(below)) above fits \(fits(above))") }
         }
         switch same || dotHomeFor.map({ CFEqual($0, el) }) == true ? dotHome : (fits(below) ? .below : .above) {
         case .beside: return beside
