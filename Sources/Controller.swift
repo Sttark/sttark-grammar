@@ -641,14 +641,12 @@ final class Controller: NSObject, NSMenuDelegate {
         // box sits in it)
         let room = display.map { CGRect(x: $0.frame.minX, y: $0.frame.minY, width: $0.frame.width, height: $0.visibleFrame.maxY - $0.frame.minY) } ?? screen
         let area = frame.intersection(screen).isNull ? frame : frame.intersection(screen)
-        let f = badgeSpot(size, area: area, box: frame, screen: room, el)
+        let f = badgeSpot(size, area: area, box: frame, screen: room, lastLine: lastLine(el, box: frame), el)
         // the dot follows a real change, like a new line of text, not the box's few-pixel twitches
         if badge.frame != f && !(badge.isVisible && Self.nearlySame(badge.frame, f, by: 8)) { badge.setFrame(f, display: true) }
         if !badge.isVisible { badge.orderFrontRegardless() }
     }
 
-    /// Somewhere the buttons don't cover the text you're typing: to the right of the last line if there's room,
-    /// else in the empty space under the text, else just outside the box (below it, or above if there's no room).
     /// Buttons around the box (the Claude app's mic and send buttons sit inside its chat box), found in the
     /// background every 2 seconds so the dot never covers one.
     var buttonsFor: AXUIElement?
@@ -691,34 +689,57 @@ final class Controller: NSObject, NSMenuDelegate {
     }
 
     /// Where the dot lives in this box, chosen once when the box gets focus and kept while you type, so the dot
-    /// never moves under your hands: just outside the box, where text can't reach. Right beside the box at its bottom
-    /// line when there's room (Google Chat, before its send button); else below the bottom-right corner; above the
-    /// top-right corner when buttons sit along the box (the Claude app's mic and send) or there's no room below.
-    /// Always off buttons and on screen.
-    enum DotHome { case beside, above, below }
+    /// never moves under your hands. In a box with room for several lines (an email), inside its bottom-right corner.
+    /// In a one-line box, right beside it, level with the line you're typing (Google Chat, before its format
+    /// buttons). Else below the bottom-right corner; above the top-right corner when buttons sit along the box
+    /// (the Claude app's mic and send) or there's no room below. Always off buttons and on screen.
+    enum DotHome { case beside, corner, above, below }
+
+    /// Where the last line of text sits (Cocoa coordinates), asked once per text and box position.
+    var lastLineKey = ""
+    var lastLineRect: CGRect?
+
+    func lastLine(_ el: AXUIElement, box: CGRect) -> CGRect? {
+        let key = "\(value.hash) \(value.length) \(Int(box.minX)) \(Int(box.maxY))"
+        if key == lastLineKey { return lastLineRect }
+        lastLineKey = key
+        var i = value.length - 1
+        while i >= 0, let c = Unicode.Scalar(value.character(at: i)), CharacterSet.whitespacesAndNewlines.contains(c) { i -= 1 }
+        lastLineRect = i < 0 ? nil : lineRects(el, NSRange(location: i, length: 1)).last.map(AX.toCocoa).flatMap { box.insetBy(dx: -4, dy: -4).intersects($0) ? $0 : nil }
+        return lastLineRect
+    }
     var dotHomeFor: AXUIElement?
     var dotHome: DotHome = .below
 
-    func badgeSpot(_ size: CGSize, area: CGRect, box: CGRect, screen: CGRect, _ el: AXUIElement) -> CGRect {
+    func badgeSpot(_ size: CGSize, area: CGRect, box: CGRect, screen: CGRect, lastLine: CGRect?, _ el: AXUIElement) -> CGRect {
         let buttons = nearbyButtons(el, box: box)
         let clear = { (r: CGRect) in !buttons.contains { $0.insetBy(dx: -3, dy: -3).intersects(r) } }
         let above = CGRect(x: box.maxX - size.width, y: box.maxY + 2, width: size.width, height: size.height)
         let below = CGRect(x: box.maxX - size.width, y: box.minY - size.height - 2, width: size.width, height: size.height)
         let fits = { (r: CGRect) in screen.contains(r) && clear(r) }
-        // just right of the box, level with its bottom line (Google Chat: between the box and its send button)
-        let line = min(box.height, 28)
-        let beside = CGRect(x: box.maxX, y: box.minY + (line - size.height) / 2, width: size.width, height: size.height)
+        // a box with room for several lines (an email, an Asana description): inside its bottom-right corner,
+        // where the text reaches last
+        let tall = box.height > 60
+        let corner = CGRect(x: box.maxX - size.width - 4, y: box.minY + 4, width: size.width, height: size.height)
+        // just right of a one-line box, level with the line you're typing (Google Chat: between the box and its
+        // format buttons)
+        let lineMid = lastLine.map { min(max($0.midY, box.minY + size.height / 2), box.maxY - size.height / 2) } ?? box.minY + min(box.height, 28) / 2
+        let beside = CGRect(x: box.maxX, y: lineMid - size.height / 2, width: size.width, height: size.height)
         let same = dotHomeFor.map { CFEqual($0, el) } ?? false
         // decide once per box, after the buttons around it are known
         if !same && Date().timeIntervalSince(buttonsAt) < 3 && buttonsFor.map({ CFEqual($0, el) }) == true {
             let alongBox = buttons.contains { $0.insetBy(dx: -3, dy: -3).intersects(box) }
             let besideFits = screen.contains(beside) && !buttons.contains { $0.intersects(beside.insetBy(dx: 3, dy: 3)) }
-            dotHome = besideFits && !alongBox ? .beside : !alongBox && fits(below) ? .below : fits(above) ? .above : .below
+            dotHome = tall && fits(corner) ? .corner
+                : !tall && besideFits && !alongBox ? .beside
+                : !alongBox && fits(below) ? .below : fits(above) ? .above : .below
             dotHomeFor = el
-            if debug { log("dot home for this box: \(dotHome) (buttons along the box: \(alongBox)) box \(box) dot \(size) room \(screen) beside fits \(besideFits) below fits \(fits(below)) above fits \(fits(above))") }
+            if debug { log("dot home for this box: \(dotHome) (buttons along the box: \(alongBox)) box \(box) last line \(lastLine.map { "\($0)" } ?? "none") beside fits \(besideFits) below fits \(fits(below)) above fits \(fits(above))") }
         }
         switch same || dotHomeFor.map({ CFEqual($0, el) }) == true ? dotHome : (fits(below) ? .below : .above) {
         case .beside: return beside
+        // once the text reaches the corner, step outside the box so the dot never covers what you typed
+        case .corner: return lastLine.map { $0.insetBy(dx: -2, dy: -2).intersects(corner) } == true ? (fits(below) ? below : above) : corner
         case .above: return above
         case .below: return below
         }

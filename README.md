@@ -3,7 +3,7 @@
 A Mac menu bar app for Sttark that uses Claude to check your writing as you type, in any app: the Claude app, Gmail, Slack, Google Chat, Asana, TextEdit and more.
 
 - **Fixes as you type.** Spelling, grammar and capitals get underlined (red for spelling, yellow for grammar and capitals). Hover one to see the fix, and click it or press Tab to take it.
-- **Fix all.** A small dot just outside the corner of the text box counts the mistakes. Hover it and take them all in one click.
+- **Fix all.** A small dot by the text box counts the mistakes. Hover it and take them all in one click.
 - **Tidy up.** For a longer message, Claude offers a cleaner layout: paragraphs split, blank lines between them, and things run together turned into a bulleted or numbered list. One click swaps it in.
 - **Your words and names.** Add jargon to your dictionary so it's never flagged, and save names like Sttark with their capital so the app always writes them that way. Web and email addresses are left alone.
 - **Translate to Chinese**, with an English check of what the Chinese says.
@@ -37,7 +37,7 @@ The app checks for a new version a few times a day. When there is one, you get a
 - Hover an underline to see the fix. Click the green fix, or press **Tab**, to take it. **Esc** ignores it.
 - **Add to dictionary** stops a word from being flagged. Use it for names and jargon. A word saved with a capital, like Sttark, counts as a name: the app writes it that way everywhere except inside addresses like sttark.com. Edit the list with **My dictionary…** in the menu.
 - Web addresses, email addresses and file paths are never flagged.
-- A small 12-pixel dot sits just outside a corner of the text box, where your text can't reach and off any buttons: below the bottom-right corner, or above the top-right corner when buttons sit along the box (like the Claude app's mic and send). It stays in one spot while you type. Gray and spinning while it checks, red with the number of mistakes, blue when there's a tidy-up, red with a blue corner when there are both. A turning gray ring means a check is still running; a green ring means Tidy up found nothing to change; a green check means everything is done and nothing was found. Hover it for a card with **Fix all** and **Tidy up**, one click each. Click the dot to keep the card open; Esc or a click anywhere else closes it.
+- A small 12-pixel dot sits by the text box, off any buttons: inside the bottom-right corner of a box with room for several lines (an email), right beside a one-line box level with your text (Google Chat), or just outside the box's corner when buttons sit along it (above the Claude app's chat box). If your text reaches the corner, it steps outside the box. It stays in one spot while you type. Gray and spinning while it checks, red with the number of mistakes, blue when there's a tidy-up, red with a blue corner when there are both. A turning gray ring means a check is still running; a green ring means Tidy up found nothing to change; a green check means everything is done and nothing was found. Hover it for a card with **Fix all** and **Tidy up**, one click each. Click the dot to keep the card open; Esc or a click anywhere else closes it.
 - **Command-1** takes every fix (Fix all), and **Command-2** tidies up when the dot is blue. You can change both (see Shortcuts).
 - Made-up words get fixed to Claude's best guess from the sentence, using your dictionary, or flagged as not a word if there's no guess. Add your work terms to the dictionary so the guess is right.
 
