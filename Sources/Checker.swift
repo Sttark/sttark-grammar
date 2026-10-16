@@ -418,13 +418,31 @@ enum Checker {
             throw CheckError.badReply("stop_reason \(json["stop_reason"] ?? "none")")
         }
         let usage = json["usage"] as? [String: Any] ?? [:]
-        return (reply, usage["input_tokens"] as? Int ?? 0, usage["output_tokens"] as? Int ?? 0)
+        return (Diff.unescaped(reply, like: text) as? [String: Any] ?? reply, usage["input_tokens"] as? Int ?? 0, usage["output_tokens"] as? Int ?? 0)
     }
 }
 
 /// Positions come from comparing the text with Claude's corrected copy word by word,
 /// so underlines land on exactly the right characters. Claude's own list supplies the reasons.
 enum Diff {
+    /// Claude now and then writes a character as its code ("don\\u2019t" for "don’t") inside the JSON it sends
+    /// back, so the code itself shows up in the text. Unless the user typed such a code, turn it back into the character.
+    static func unescaped(_ v: Any, like text: String) -> Any {
+        if text.contains("\\u") { return v }
+        if let s = v as? String {
+            guard s.contains("\\u"), let re = try? NSRegularExpression(pattern: #"\\u([0-9a-fA-F]{4})"#) else { return s }
+            let out = NSMutableString(string: s)
+            for m in re.matches(in: s, range: NSRange(location: 0, length: out.length)).reversed() {
+                let hex = (s as NSString).substring(with: m.range(at: 1))
+                if let code = UInt32(hex, radix: 16), let c = Unicode.Scalar(code) { out.replaceCharacters(in: m.range, with: String(Character(c))) }
+            }
+            return out as String
+        }
+        if let a = v as? [Any] { return a.map { unescaped($0, like: text) } }
+        if let d = v as? [String: Any] { return d.mapValues { unescaped($0, like: text) } }
+        return v
+    }
+
     /// Tags (mention chips) as a box like Google Chat's reports them: an invisible marker, "@", the name, another
     /// marker, with line breaks between. Each comes back with its range and as plain "@Name".
     static func tags(in s: NSString) -> [(NSRange, String)] {
