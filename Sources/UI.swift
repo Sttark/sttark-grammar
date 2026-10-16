@@ -139,12 +139,14 @@ struct FootButton: View {
 /// The one small round dot (12 px) in the box's corner, like Grammarly's: gray and spinning while checking, red with the
 /// number of word fixes, blue when there's a tidy-up, red with a blue corner when there are both. A thin ring turns
 /// around a red or blue dot while a check is still running, and a green check shows for a moment when all checks
-/// are done and found nothing.
+/// are done and found nothing. A still green ring around a red dot means Tidy up found nothing to change in the layout.
 struct DotView: View {
     let count: Int
     let checking: Bool
     let tidy: Bool
     var done = false
+    /// Tidy up checked this message and found nothing to change: a still green ring around the dot.
+    var layoutFine = false
     let click: () -> Void
 
     var body: some View {
@@ -166,7 +168,10 @@ struct DotView: View {
                     Circle().fill(Color(nsColor: Kind.tidy.color)).frame(width: 5, height: 5).offset(x: 1.5, y: -1.5)
                 }
             }
-            .overlay { if checking && (count > 0 || tidy) { Ring() } }
+            .overlay {
+                if checking && (count > 0 || tidy) { Ring() }
+                else if layoutFine && count > 0 { Circle().stroke(Color(nsColor: Brand.green), lineWidth: 1.6).frame(width: 16.5, height: 16.5) }
+            }
         }
         .buttonStyle(.plain)
         .padding(3)
