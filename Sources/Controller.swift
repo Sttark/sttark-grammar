@@ -637,7 +637,7 @@ final class Controller: NSObject, NSMenuDelegate {
         let size = badge.contentView!.fittingSize
         let screen = NSScreen.screens.first { $0.frame.intersects(frame) }?.visibleFrame ?? frame
         let area = frame.intersection(screen).isNull ? frame : frame.intersection(screen)
-        let f = clearOfButtons(badgeSpot(size, area: area, box: frame, screen: screen, el), box: frame, area: area, screen: screen, el)
+        let f = badgeSpot(size, area: area, box: frame, screen: screen, el)
         // the dot follows a real change, like a new line of text, not the box's few-pixel twitches
         if badge.frame != f && !(badge.isVisible && Self.nearlySame(badge.frame, f, by: 8)) { badge.setFrame(f, display: true) }
         if !badge.isVisible { badge.orderFrontRegardless() }
@@ -686,41 +686,42 @@ final class Controller: NSObject, NSMenuDelegate {
         return same ? buttonFrames : []
     }
 
-    /// Slide the dot left past any button it would cover; with no room in the box, put it under (or over) the box.
-    func clearOfButtons(_ spot: CGRect, box: CGRect, area: CGRect, screen: CGRect, _ el: AXUIElement) -> CGRect {
-        let buttons = nearbyButtons(el, box: box)
-        var r = spot
-        for _ in 0..<8 {
-            guard let hit = buttons.first(where: { $0.insetBy(dx: -3, dy: -3).intersects(r) }) else { return r }
-            r.origin.x = hit.minX - r.width - 4
-            if r.minX < area.minX + 4 { break }
-        }
-        if !buttons.contains(where: { $0.insetBy(dx: -3, dy: -3).intersects(r) }) && r.minX >= area.minX + 4 { return r }
-        let below = CGRect(x: box.maxX - spot.width, y: box.minY - spot.height - 2, width: spot.width, height: spot.height)
-        if below.minY >= screen.minY && !buttons.contains(where: { $0.intersects(below) }) { return below }
-        return CGRect(x: box.maxX - spot.width, y: box.maxY + 2, width: spot.width, height: spot.height)
-    }
-
+    /// Where the dot goes, never on your text or on a button (the Claude app's mic and send buttons sit inside its
+    /// box): right of the last line but left of any button in that row, else under the text in the corner (also left
+    /// of buttons), else below or above the box.
     func badgeSpot(_ size: CGSize, area: CGRect, box: CGRect, screen: CGRect, _ el: AXUIElement) -> CGRect {
-        let corner = CGRect(x: area.maxX - size.width - 4, y: area.minY + 4, width: size.width, height: size.height)
-        guard value.length > 0 else { return corner }
-        // the last line: where the last character sits (AppKit coordinates, origin bottom-left)
-        guard let raw = bounds(el, NSRange(location: value.length - 1, length: 1)) else { return corner }
-        var last = AX.toCocoa(raw)
-        if value.character(at: value.length - 1) == 10 { last.size.width = 0 }    // an empty last line
-        let right = CGRect(x: area.maxX - size.width - 4, y: last.midY - size.height / 2, width: size.width, height: size.height)
+        let buttons = nearbyButtons(el, box: box)
+        let clear = { (r: CGRect) in !buttons.contains { $0.insetBy(dx: -3, dy: -3).intersects(r) } }
+        /// the right edge for a dot in this row: the box's edge, or the left edge of the first button in the way
+        func rightEdge(_ y: CGFloat) -> CGFloat {
+            let row = CGRect(x: area.minX, y: y, width: area.width, height: size.height)
+            return min(area.maxX, buttons.filter { $0.insetBy(dx: -3, dy: -3).intersects(row) }.map(\.minX).min() ?? .infinity) - 4
+        }
+        let cornerY = area.minY + 4
+        let corner = CGRect(x: rightEdge(cornerY) - size.width, y: cornerY, width: size.width, height: size.height)
+        let below = CGRect(x: box.maxX - size.width, y: box.minY - size.height - 2, width: size.width, height: size.height)
+        let above = CGRect(x: box.maxX - size.width, y: box.maxY + 2, width: size.width, height: size.height)
+        var last = CGRect(x: area.minX, y: area.maxY, width: 0, height: 0)
+        if value.length > 0, let raw = bounds(el, NSRange(location: value.length - 1, length: 1)) {
+            last = AX.toCocoa(raw)
+            if value.character(at: value.length - 1) == 10 { last.size.width = 0 }    // an empty last line
+        }
         func spot(_ name: String, _ r: CGRect) -> CGRect {
-            if debug && name != lastSpot { lastSpot = name; log("badge \(name) of text: last line ends at x \(Int(last.maxX)), badge \(r)") }
+            if debug && name != lastSpot { lastSpot = name; log("badge \(name): last line ends at x \(Int(last.maxX)), badge \(r)") }
             return r
         }
+        let rightY = last.midY - size.height / 2
+        let right = CGRect(x: rightEdge(rightY) - size.width, y: rightY, width: size.width, height: size.height)
         // the buttons are taller than a line of text, so they may stick a little past the box's edge
-        if right.minX >= last.maxX + 8 && right.minX >= area.minX && right.midY >= area.minY && right.midY <= area.maxY {
+        if value.length > 0 && right.minX >= last.maxX + 8 && right.minX >= area.minX && right.midY >= area.minY
+            && right.midY <= area.maxY && clear(right) {
             return spot("right of last line", right)
         }
-        if last.minY - area.minY >= size.height + 6 { return spot("under the text", corner) }
-        let below = CGRect(x: box.maxX - size.width, y: box.minY - size.height - 2, width: size.width, height: size.height)
-        if below.minY >= screen.minY { return spot("below the box", below) }
-        return spot("above the box", CGRect(x: box.maxX - size.width, y: box.maxY + 2, width: size.width, height: size.height))
+        if (value.length == 0 || last.minY - area.minY >= size.height + 6) && corner.minX >= area.minX && clear(corner) {
+            return spot("under the text", corner)
+        }
+        if below.minY >= screen.minY && clear(below) { return spot("below the box", below) }
+        return spot("above the box", above)
     }
 
     // MARK: hover card
