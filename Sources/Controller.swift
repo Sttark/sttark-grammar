@@ -625,11 +625,12 @@ final class Controller: NSObject, NSMenuDelegate {
         if wasChecking && !checking && count == 0 && !tidyNow { doneAt = Date() }
         wasChecking = checking
         let done = !checking && count == 0 && !tidyNow && Date().timeIntervalSince(doneAt) < 1.5
+        let layoutFine = !checking && !tidyNow && tidyEligible && tidyChecked.contains(value as String)
         guard count > 0 || checking || tidyNow || done else { badge.orderOut(nil); return }
-        let state = "\(count) \(checking) \(tidyNow) \(done)"
+        let state = "\(count) \(checking) \(tidyNow) \(done) \(layoutFine)"
         if state != badgeState || badge.contentView == nil {
             badgeState = state
-            badge.contentView = ClickThroughHostingView(rootView: DotView(count: count, checking: checking, tidy: tidyNow, done: done) { [weak self] in self?.clickDot() })
+            badge.contentView = ClickThroughHostingView(rootView: DotView(count: count, checking: checking, tidy: tidyNow, done: done, layoutFine: layoutFine) { [weak self] in self?.clickDot() })
         }
         let size = badge.contentView!.fittingSize
         let screen = NSScreen.screens.first { $0.frame.intersects(frame) }?.visibleFrame ?? frame
