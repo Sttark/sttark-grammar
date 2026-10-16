@@ -214,6 +214,7 @@ enum TidyChecker {
     - Split a paragraph that runs separate points together. In a message with several paragraphs, put a blank line between them.
     - Count the separate things the message lists, asks for or asks about. Three or more, whether in one sentence (a request naming four things to cover counts) or across a few in a row (three or more questions in a row count), always become a list; this is not a judgment call, with every one of those things in it: a line of its own introducing the list that ends with a colon, then one item per line starting with "- ", or "1. ", "2. " when the order matters. Items start with a capital letter and have no period.
     - Wrap in **double asterisks** the one or two things a reader must not miss in a long message: a deadline or a required action, or else the one sentence that states the main point, so someone skimming still gets it. Bold the whole sentence or phrase, copied exactly. None in a short or casual message.
+    - An @mention at the start of the message stays first, on the same line as the words right after it.
     - Keep the user's words, voice and meaning. Reword only as much as a list needs to read well. Never add, drop or soften a point. Keep greetings and sign-offs as they are.
     If the layout is already fine, return the message unchanged and set "changed" to false. "summary" says what you changed in at most 12 plain words.
     """
@@ -415,6 +416,30 @@ enum Checker {
 /// Positions come from comparing the text with Claude's corrected copy word by word,
 /// so underlines land on exactly the right characters. Claude's own list supplies the reasons.
 enum Diff {
+    /// Tags (mention chips) as a box like Google Chat's reports them: an invisible marker, "@", the name, another
+    /// marker, with line breaks between. Each comes back with its range and as plain "@Name".
+    static func tags(in s: NSString) -> [(NSRange, String)] {
+        guard let re = try? NSRegularExpression(pattern: "\u{200B}\\s*@\\s*([^\\n\u{200B}]{1,60}?)\\s*\u{200B}") else { return [] }
+        return re.matches(in: s as String, range: NSRange(location: 0, length: s.length)).map { m in
+            (m.range, "@" + s.substring(with: m.range(at: 1)))
+        }
+    }
+
+    /// The text with each tag written as "@Name", as you'd read it.
+    static func flattenTags(_ s: String) -> String {
+        let ns = s as NSString, out = NSMutableString(string: s)
+        for (r, name) in tags(in: ns).reversed() { out.replaceCharacters(in: r, with: name) }
+        return out as String
+    }
+
+    /// Every tag sits at the start, with nothing but spaces between them: Tidy up can replace just the text after.
+    static func tagsAtStart(_ s: NSString) -> Bool {
+        guard let last = tags(in: s).last else { return false }
+        let head = NSMutableString(string: s.substring(to: last.0.upperBound))
+        for (r, _) in tags(in: head).reversed() { head.replaceCharacters(in: r, with: "") }
+        return (head as String).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     static func plainQuotes(_ s: String) -> String {
         String(s.map { "’‘".contains($0) ? "'" : "“”".contains($0) ? "\"" : $0 })
     }

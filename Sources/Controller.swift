@@ -51,6 +51,8 @@ final class Controller: NSObject, NSMenuDelegate {
     /// Messages whose tidy-up check is out. A check for older text doesn't hold up one for the text as it is now.
     var tidyInflight: Set<String> = []
     var tidyDismissed: Set<String> = []
+    /// Messages Tidy up left alone because a tag sits in the middle (a paste would turn it into plain text).
+    var tagSkipped: Set<String> = []
     /// Apps whose box drops bold from a paste (the Claude app's chat box has no bold). Tidy-ups there leave bold out.
     var noBold: Set<String> {
         get { Set(defaults.stringArray(forKey: "noBold") ?? ["com.anthropic.claudefordesktop"]) }
@@ -594,7 +596,7 @@ final class Controller: NSObject, NSMenuDelegate {
 
     /// The message is long enough for a tidy-up check.
     var tidyEligible: Bool {
-        let key = value as String
+        let key = Diff.flattenTags(value as String)
         let words = key.split(whereSeparator: \.isWhitespace).count, lines = key.split(separator: "\n").count
         return tidyOn && value.length <= 8000 && (words >= 20 || lines >= 3)
     }
@@ -625,7 +627,7 @@ final class Controller: NSObject, NSMenuDelegate {
         if wasChecking && !checking && count == 0 && !tidyNow { doneAt = Date() }
         wasChecking = checking
         let done = !checking && count == 0 && !tidyNow && Date().timeIntervalSince(doneAt) < 1.5
-        let layoutFine = !checking && !tidyNow && tidyEligible && tidyChecked.contains(value as String)
+        let layoutFine = !checking && !tidyNow && tidyEligible && tidyChecked.contains(value as String) && !tagSkipped.contains(value as String)
         guard count > 0 || checking || tidyNow || done else { badge.orderOut(nil); return }
         let state = "\(count) \(checking) \(tidyNow) \(done) \(layoutFine)"
         if state != badgeState || badge.contentView == nil {
@@ -729,7 +731,7 @@ final class Controller: NSObject, NSMenuDelegate {
         hideCard()
         let checking = isChecking
         let rich = element.map { !AX.children($0).isEmpty } ?? false
-        let layout: DotCardView.Layout = tidy != nil ? .offer : !tidyEligible ? .short : tidyChecking ? .checking : .fine
+        let layout: DotCardView.Layout = tidy != nil ? .offer : tagSkipped.contains(value as String) ? .tagged : !tidyEligible ? .short : tidyChecking ? .checking : .fine
         let view = DotCardView(count: issues.filter(\.hasFix).count, checking: checking, tidy: tidy, layout: layout, warn: rich,
                                fixAll: { [weak self] in self?.hideCard(); self?.fixAll() },
                                tidyUp: { [weak self] in self?.hideCard(); self?.applyTidy() })
@@ -894,11 +896,20 @@ final class Controller: NSObject, NSMenuDelegate {
     func sendTidyCheck(_ el: AXUIElement) {
         let key = value as String
         guard tidyOn, !tidyInflight.contains(key), tidyInflight.count < 3, !tidyChecked.contains(key), value.length <= 8000 else { return }
-        let words = key.split(whereSeparator: \.isWhitespace).count
-        let lines = key.split(separator: "\n").count
+        // a tag counts as the name it shows, not as the lines a box like Google Chat reports for it
+        let flat = Diff.flattenTags(key)
+        let words = flat.split(whereSeparator: \.isWhitespace).count
+        let lines = flat.split(separator: "\n").count
         guard words >= 20 || lines >= 3 else { return }
+        // A paste can't put a tag back, only text. With a tag in the middle there's nowhere to paste around it.
+        if !Diff.tags(in: value).isEmpty && !Diff.tagsAtStart(value) {
+            tidyChecked.insert(key)
+            tagSkipped.insert(key)
+            note("tidy: skipped in \(appName), a tag sits in the middle of the message")
+            return
+        }
         tidyInflight.insert(key)
-        let text = displayText(el)
+        let text = Diff.flattenTags(displayText(el))
         note("tidy check in \(appName) with \(model.rawValue): \(words) words, \(lines) lines, sent \(String(text.prefix(2000)).debugDescription)")
         let m = model
         let plainBox = noBold.contains(appID)
@@ -997,6 +1008,10 @@ final class Controller: NSObject, NSMenuDelegate {
         // a box that already spaces its paragraphs (like a web page) gets no empty lines, or they'd look doubled
         let spaced = paragraphsSpaced(el)
         note("tidy up in \(appName): \(t.lines.count) lines, \(t.lines.filter { $0.marker != nil }.count) list items, \(t.bold.count) bold, blank lines \(spaced ? "left to the box" : "added")")
+        // Tags at the start (Google Chat's mention chips) stay as they are: paste only over the text after them.
+        if let last = Diff.tags(in: value).last, Diff.tagsAtStart(value) {
+            return applyTidyAfterTags(el, t, after: last.0.upperBound, names: Diff.tags(in: value).map(\.1), spaced: spaced)
+        }
         let first = t.lines[0].text
         func finish(_ ok: Bool) {
             refresh(el)
@@ -1046,6 +1061,46 @@ final class Controller: NSObject, NSMenuDelegate {
         }
     }
 
+
+    /// Tidy up for a message that starts with tags: the tidied text without its leading "@Name"s goes over the text
+    /// after the last tag, never over the tags. If that text can't be selected exactly, nothing is pasted.
+    func applyTidyAfterTags(_ el: AXUIElement, _ t: Tidy, after start: Int, names: [String], spaced: Bool) {
+        var tail = t
+        var head = tail.lines.first?.text ?? ""
+        for n in names {
+            head = head.trimmingCharacters(in: .whitespaces)
+            if head.lowercased().hasPrefix(n.lowercased()) { head = String(head.dropFirst(n.count)) }
+        }
+        head = head.trimmingCharacters(in: .whitespaces)
+        if head.isEmpty { tail.lines.removeFirst(); if !tail.lines.isEmpty { tail.lines[0].blankBefore = false } }
+        else { tail.lines[0].text = head }
+        func finish(_ ok: Bool) {
+            refresh(el)
+            lastChange = Date()
+            lastOwnEdit = Date()
+            editing = false
+            note(ok ? "tidy up done, tags kept" : "tidy up didn't go in")
+            updateStatus()
+        }
+        guard let first = tail.lines.first?.text, start < value.length else { return finish(false) }
+        let range = NSRange(location: start, length: value.length - start)
+        let old = value.substring(with: range)
+        let want = first.split(separator: " ").prefix(4).joined(separator: " ").lowercased()
+        note("tidy up in \(appName) after \(names.count) tag\(names.count == 1 ? "" : "s"): \(tail.lines.count) lines")
+        select(el, range, expect: old) { ok in
+            guard ok else { note("tidy: couldn't select the text after the tags; nothing pasted"); return finish(false) }
+            let before = AX.string(el, kAXValueAttribute)
+            // the space between the last tag and the words stays (a no-break space, so a rich box keeps it)
+            let lead = old.first.map { $0 == " " || $0 == "\u{00A0}" } == true ? "\u{00A0}" : ""
+            // plain text only: a formatted paste can start a new paragraph and push the words below the tag
+            self.paste(lead + tail.plain(blankLines: !spaced)) {
+                Self.wait(until: { let v = AX.string(el, kAXValueAttribute) ?? ""; return v != before && Diff.flattenTags(v).lowercased().contains(want) }, tries: 100) { landed in
+                    if !landed { note("tidy paste after tags didn't show") }
+                    finish(landed)
+                }
+            }
+        }
+    }
 
     /// The message as you see it, blank lines included. Chrome-based apps leave blank lines out of the text
     /// they hand over, but their own count has one break per blank line and none for a plain line break.
