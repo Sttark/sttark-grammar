@@ -64,7 +64,7 @@ If the text can't be edited, like a web page, a card shows the Chinese and the E
 
 Either way the Chinese is also copied. Select Chinese text and you get English instead.
 
-Translation uses Claude Opus 5, which wrote more natural Chinese than Haiku in testing. A short message costs about half a cent.
+Translation uses Claude Opus 5.5, which wrote the most natural Chinese in testing. If its safety check declines a message, Sonnet 5.5 and then Haiku 4.5 get it instead, and the log notes the reason. A short message costs about half a cent.
 
 ### Read aloud
 

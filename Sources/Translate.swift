@@ -104,22 +104,43 @@ final class Translator: NSObject {
         }
     }
 
+    /// Opus first for the most natural Chinese. Claude's safety checks now and then decline a harmless business
+    /// message ("stop_reason refusal"); then the next model gets it instead of the translation failing.
+    static let models = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"]
+
     static func translate(_ text: String) async throws -> (String, String) {
+        var refusals: [String] = []
+        for m in models {
+            do { return try await translate(text, model: m) }
+            catch Refused.by(let why) {
+                refusals.append("\(m): \(why)")
+                note("translate: \(m) declined (\(why)); trying the next model")
+            }
+        }
+        throw CheckError.badReply("every model declined: " + refusals.joined(separator: "; "))
+    }
+
+    enum Refused: Error { case by(String) }
+
+    static func translate(_ text: String, model: String) async throws -> (String, String) {
         guard let key = Checker.apiKey else { throw CheckError.noKey }
-        let body: [String: Any] = [
-            "model": "claude-opus-5",
+        var config: [String: Any] = ["format": ["type": "json_schema", "schema": schema]]
+        var body: [String: Any] = [
+            "model": model,
             "max_tokens": 16000,
             "system": system,
             "messages": [["role": "user", "content": text]],
-            "output_config": ["effort": "low", "format": ["type": "json_schema", "schema": schema]],
-            "fallbacks": "default",
         ]
+        // each model's settings: Opus 5.5 always thinks (effort is the only dial); Sonnet 5.5 turns thinking off
+        // with "between_tools"; Haiku 4.5 takes neither
+        if model.hasPrefix("claude-opus") || model.hasPrefix("claude-sonnet") { config["effort"] = "low" }
+        if model.hasPrefix("claude-sonnet-5-5") { body["thinking"] = ["type": "between_tools"] }
+        body["output_config"] = config
         var req = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
         req.httpMethod = "POST"
         req.timeoutInterval = 90
         req.setValue(key, forHTTPHeaderField: "x-api-key")
         req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        req.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
         req.setValue("application/json", forHTTPHeaderField: "content-type")
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
@@ -129,6 +150,10 @@ final class Translator: NSObject {
         guard status == 200 else {
             let msg = ((json["error"] as? [String: Any])?["message"] as? String) ?? String(data: data, encoding: .utf8) ?? ""
             throw CheckError.http(status, String(msg.prefix(200)))
+        }
+        if json["stop_reason"] as? String == "refusal" {
+            let d = json["stop_details"] as? [String: Any]
+            throw Refused.by([d?["category"] as? String, d?["explanation"] as? String].compactMap { $0 }.joined(separator: ", ").ifEmpty("no reason given"))
         }
         guard json["stop_reason"] as? String == "end_turn",
               let blocks = json["content"] as? [[String: Any]],
@@ -267,4 +292,8 @@ struct TranslateCard: View {
             .padding(.horizontal, 8).padding(.vertical, 6)
         }
     }
+}
+
+extension String {
+    func ifEmpty(_ other: String) -> String { isEmpty ? other : self }
 }
