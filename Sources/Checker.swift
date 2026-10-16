@@ -367,6 +367,8 @@ enum Checker {
         // Claude now and then lets part of its own answer ("issues":[], "Issues: ...") leak into the corrected copy;
         // a fix that adds line breaks or that kind of text is never a real fix
         issues.removeAll { i in
+            // a tag's invisible marker (Google Chat) is part of the tag: a fix that touches it would break the tag
+            i.original.contains("\u{200B}") || i.suggestion.contains("\u{200B}") ||
             (i.original != i.suggestion && Diff.plainQuotes(i.original) == Diff.plainQuotes(i.suggestion))
                 || (i.suggestion.contains("\n") && !i.original.contains("\n"))
                 || ["\"issues\"", "\"corrected\"", "Issues:", "{", "}"].contains { i.suggestion.contains($0) && !i.original.contains($0) }
@@ -401,6 +403,13 @@ enum Checker {
         guard status == 200 else {
             let msg = ((json["error"] as? [String: Any])?["message"] as? String) ?? String(data: data, encoding: .utf8) ?? ""
             throw CheckError.http(status, String(msg.prefix(200)))
+        }
+        // A safety check now and then declines a harmless message (a supplier request for CAD files, 10/16).
+        // Ask Haiku 4.5 instead of failing, and note why.
+        if json["stop_reason"] as? String == "refusal", model != .haiku {
+            let d = json["stop_details"] as? [String: Any]
+            note("\(model.rawValue) declined a check (\(d?["category"] as? String ?? "no reason given")); asking \(Model.haiku.rawValue)")
+            return try await ask(system: system, schema: schema, text: text, model: .haiku)
         }
         guard json["stop_reason"] as? String == "end_turn",
               let blocks = json["content"] as? [[String: Any]],
