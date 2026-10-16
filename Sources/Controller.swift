@@ -587,23 +587,46 @@ final class Controller: NSObject, NSMenuDelegate {
 
     /// The dot spins while a paragraph or the whole message is being checked, and in the pause after Fix all
     /// or Tidy up before the tidy-up check of the new text goes out, so there's no still gap before it appears.
-    var isChecking: Bool {
-        if tidyInflight != nil || paragraphs(value).contains(where: { inflight.contains($0.1) }) { return true }
+    var isChecking: Bool { paragraphChecking || tidyChecking }
+
+    /// The message is long enough for a tidy-up check.
+    var tidyEligible: Bool {
         let key = value as String
         let words = key.split(whereSeparator: \.isWhitespace).count, lines = key.split(separator: "\n").count
-        let tidyDue = tidyOn && !tidyChecked.contains(key) && value.length <= 8000 && (words >= 20 || lines >= 3)
-        return tidyDue && Date().timeIntervalSince(lastOwnEdit) < 4
+        return tidyOn && value.length <= 8000 && (words >= 20 || lines >= 3)
     }
+    /// You've paused long enough that the checks are about to go out (they go at 2 s): show it from 0.6 s on.
+    var paused: Bool { Date().timeIntervalSince(lastChange) > 0.6 || Date().timeIntervalSince(lastOwnEdit) < 4 }
+
+    var tidyChecking: Bool {
+        tidyInflight != nil || (tidyEligible && !tidyChecked.contains(value as String) && paused)
+    }
+
+    var paragraphChecking: Bool {
+        paragraphs(value).contains { r, t in
+            if inflight.contains(t) { return true }
+            let words = t.split(whereSeparator: { $0.isWhitespace }).count
+            let failed = failedAt[t].map { Date().timeIntervalSince($0) < 30 } ?? false
+            return paused && cache[t] == nil && words >= 3 && t.utf16.count <= 4000 && !failed
+        }
+    }
+
+    /// When the last check finished with nothing to show: the dot gives a green check for a moment.
+    var doneAt = Date.distantPast
+    var wasChecking = false
 
     func placeBadge(_ frame: CGRect, _ el: AXUIElement) {
         let checking = isChecking
         let count = issues.count
         let tidyNow = tidy != nil
-        guard count > 0 || checking || tidyNow else { badge.orderOut(nil); return }
-        let state = "\(count) \(checking) \(tidyNow)"
+        if wasChecking && !checking && count == 0 && !tidyNow { doneAt = Date() }
+        wasChecking = checking
+        let done = !checking && count == 0 && !tidyNow && Date().timeIntervalSince(doneAt) < 1.5
+        guard count > 0 || checking || tidyNow || done else { badge.orderOut(nil); return }
+        let state = "\(count) \(checking) \(tidyNow) \(done)"
         if state != badgeState || badge.contentView == nil {
             badgeState = state
-            badge.contentView = ClickThroughHostingView(rootView: DotView(count: count, checking: checking, tidy: tidyNow) { [weak self] in self?.clickDot() })
+            badge.contentView = ClickThroughHostingView(rootView: DotView(count: count, checking: checking, tidy: tidyNow, done: done) { [weak self] in self?.clickDot() })
         }
         let size = badge.contentView!.fittingSize
         let screen = NSScreen.screens.first { $0.frame.intersects(frame) }?.visibleFrame ?? frame
@@ -702,7 +725,8 @@ final class Controller: NSObject, NSMenuDelegate {
         hideCard()
         let checking = isChecking
         let rich = element.map { !AX.children($0).isEmpty } ?? false
-        let view = DotCardView(count: issues.filter(\.hasFix).count, checking: checking, tidy: tidy, warn: rich,
+        let layout: DotCardView.Layout = tidy != nil ? .offer : !tidyEligible ? .short : tidyChecking ? .checking : .fine
+        let view = DotCardView(count: issues.filter(\.hasFix).count, checking: checking, tidy: tidy, layout: layout, warn: rich,
                                fixAll: { [weak self] in self?.hideCard(); self?.fixAll() },
                                tidyUp: { [weak self] in self?.hideCard(); self?.applyTidy() })
         let host = ClickThroughHostingView(rootView: view)
