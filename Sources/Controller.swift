@@ -48,7 +48,8 @@ final class Controller: NSObject, NSMenuDelegate {
     // tidy up: Claude's cleaned-up copy of the whole message, offered as one change
     var tidyCache: [String: Tidy] = [:]        // whole message -> its tidy-up
     var tidyChecked: Set<String> = []          // messages already sent, with or without a tidy-up
-    var tidyInflight: String?
+    /// Messages whose tidy-up check is out. A check for older text doesn't hold up one for the text as it is now.
+    var tidyInflight: Set<String> = []
     var tidyDismissed: Set<String> = []
     /// Apps whose box drops bold from a paste (the Claude app's chat box has no bold). Tidy-ups there leave bold out.
     var noBold: Set<String> {
@@ -601,7 +602,7 @@ final class Controller: NSObject, NSMenuDelegate {
     var paused: Bool { Date().timeIntervalSince(lastChange) > 0.6 || Date().timeIntervalSince(lastOwnEdit) < 4 }
 
     var tidyChecking: Bool {
-        tidyInflight != nil || (tidyEligible && !tidyChecked.contains(value as String) && paused)
+        tidyInflight.contains(value as String) || (tidyEligible && !tidyChecked.contains(value as String) && paused)
     }
 
     var paragraphChecking: Bool {
@@ -891,11 +892,11 @@ final class Controller: NSObject, NSMenuDelegate {
     /// The whole message goes to Claude once you pause, if it's long enough to have a layout.
     func sendTidyCheck(_ el: AXUIElement) {
         let key = value as String
-        guard tidyOn, tidyInflight == nil, !tidyChecked.contains(key), value.length <= 8000 else { return }
+        guard tidyOn, !tidyInflight.contains(key), tidyInflight.count < 3, !tidyChecked.contains(key), value.length <= 8000 else { return }
         let words = key.split(whereSeparator: \.isWhitespace).count
         let lines = key.split(separator: "\n").count
         guard words >= 20 || lines >= 3 else { return }
-        tidyInflight = key
+        tidyInflight.insert(key)
         let text = displayText(el)
         note("tidy check in \(appName) with \(model.rawValue): \(words) words, \(lines) lines, sent \(String(text.prefix(2000)).debugDescription)")
         let m = model
@@ -905,7 +906,7 @@ final class Controller: NSObject, NSMenuDelegate {
             do {
                 let (got, inTokens, outTokens, raw) = try await TidyChecker.check(text, model: m, words: known)
                 await MainActor.run {
-                    self.tidyInflight = nil
+                    self.tidyInflight.remove(key)
                     self.tidyChecked.insert(key)
                     // where bold can't stick, leave it out, and offer nothing if bold was the only change
                     var t = got
@@ -920,7 +921,7 @@ final class Controller: NSObject, NSMenuDelegate {
                     self.updateStatus()
                 }
             } catch {
-                await MainActor.run { self.tidyInflight = nil; self.tidyChecked.insert(key); note("tidy error \(error)") }
+                await MainActor.run { self.tidyInflight.remove(key); self.tidyChecked.insert(key); note("tidy error \(error)") }
             }
         }
     }
