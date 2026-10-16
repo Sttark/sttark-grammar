@@ -174,7 +174,8 @@ struct DotView: View {
             }
         }
         .buttonStyle(.plain)
-        .padding(3)
+        // room for the whole ring (16.5 pt plus its stroke) so its edge isn't cut off by the window
+        .padding(4)
     }
 
     var fill: Color {
