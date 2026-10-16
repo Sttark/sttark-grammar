@@ -17,12 +17,15 @@ enum AX {
 
     static func focused() -> AXUIElement? {
         // test hook: with CG_DEBUG set, /tmp/cg-follow holds a process id and a class name a test put on a box
-        // (in the Chrome window named Claude), and that box is watched as if it had focus, so a test can type
+        // (in the Chrome window named Claude), or just a process id for that app's own focused box, and that box is watched as if it had focus, so a test can type
         // into a window behind the one you're using
         if debug, let s = try? String(contentsOfFile: "/tmp/cg-follow", encoding: .utf8) {
             let w = s.split(whereSeparator: \.isWhitespace).map(String.init)
-            guard w.count == 2, let p = pid_t(w[0]) else { return nil }
-            return followed(p, w[1])
+            guard let p = pid_t(w.first ?? "") else { return nil }
+            if w.count == 2 { return followed(p, w[1]) }
+            // just a process id: that app's own focused box (a native app like Messages, in the background)
+            guard let v = attr(AXUIElementCreateApplication(p), kAXFocusedUIElementAttribute), CFGetTypeID(v) == AXUIElementGetTypeID() else { return nil }
+            return (v as! AXUIElement)
         }
         // Asking across all apps sometimes fails (the Claude app after a restart); then ask the app in front.
         var v = attr(system, kAXFocusedUIElementAttribute)
