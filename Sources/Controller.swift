@@ -686,42 +686,29 @@ final class Controller: NSObject, NSMenuDelegate {
         return same ? buttonFrames : []
     }
 
-    /// Where the dot goes, never on your text or on a button (the Claude app's mic and send buttons sit inside its
-    /// box): right of the last line but left of any button in that row, else under the text in the corner (also left
-    /// of buttons), else below or above the box.
+    /// Where the dot lives in this box, chosen once when the box gets focus and kept while you type, so the dot
+    /// never moves under your hands: just outside the box, where text can't reach. Above the top-right corner when
+    /// buttons sit along the box (the Claude app's mic and send), else below the bottom-right corner; either way off
+    /// buttons and on screen.
+    enum DotHome { case above, below }
+    var dotHomeFor: AXUIElement?
+    var dotHome: DotHome = .below
+
     func badgeSpot(_ size: CGSize, area: CGRect, box: CGRect, screen: CGRect, _ el: AXUIElement) -> CGRect {
         let buttons = nearbyButtons(el, box: box)
         let clear = { (r: CGRect) in !buttons.contains { $0.insetBy(dx: -3, dy: -3).intersects(r) } }
-        /// the right edge for a dot in this row: the box's edge, or the left edge of the first button in the way
-        func rightEdge(_ y: CGFloat) -> CGFloat {
-            let row = CGRect(x: area.minX, y: y, width: area.width, height: size.height)
-            return min(area.maxX, buttons.filter { $0.insetBy(dx: -3, dy: -3).intersects(row) }.map(\.minX).min() ?? .infinity) - 4
-        }
-        let cornerY = area.minY + 4
-        let corner = CGRect(x: rightEdge(cornerY) - size.width, y: cornerY, width: size.width, height: size.height)
-        let below = CGRect(x: box.maxX - size.width, y: box.minY - size.height - 2, width: size.width, height: size.height)
         let above = CGRect(x: box.maxX - size.width, y: box.maxY + 2, width: size.width, height: size.height)
-        var last = CGRect(x: area.minX, y: area.maxY, width: 0, height: 0)
-        if value.length > 0, let raw = bounds(el, NSRange(location: value.length - 1, length: 1)) {
-            last = AX.toCocoa(raw)
-            if value.character(at: value.length - 1) == 10 { last.size.width = 0 }    // an empty last line
+        let below = CGRect(x: box.maxX - size.width, y: box.minY - size.height - 2, width: size.width, height: size.height)
+        let fits = { (r: CGRect) in screen.contains(r) && clear(r) }
+        let same = dotHomeFor.map { CFEqual($0, el) } ?? false
+        // decide once per box, after the buttons around it are known
+        if !same && Date().timeIntervalSince(buttonsAt) < 3 && buttonsFor.map({ CFEqual($0, el) }) == true {
+            let alongBox = buttons.contains { $0.insetBy(dx: -3, dy: -3).intersects(box) }
+            dotHome = !alongBox && fits(below) ? .below : fits(above) ? .above : .below
+            dotHomeFor = el
+            if debug { log("dot home for this box: \(dotHome) (buttons along the box: \(alongBox))") }
         }
-        func spot(_ name: String, _ r: CGRect) -> CGRect {
-            if debug && name != lastSpot { lastSpot = name; log("badge \(name): last line ends at x \(Int(last.maxX)), badge \(r)") }
-            return r
-        }
-        let rightY = last.midY - size.height / 2
-        let right = CGRect(x: rightEdge(rightY) - size.width, y: rightY, width: size.width, height: size.height)
-        // the buttons are taller than a line of text, so they may stick a little past the box's edge
-        if value.length > 0 && right.minX >= last.maxX + 8 && right.minX >= area.minX && right.midY >= area.minY
-            && right.midY <= area.maxY && clear(right) {
-            return spot("right of last line", right)
-        }
-        if (value.length == 0 || last.minY - area.minY >= size.height + 6) && corner.minX >= area.minX && clear(corner) {
-            return spot("under the text", corner)
-        }
-        if below.minY >= screen.minY && clear(below) { return spot("below the box", below) }
-        return spot("above the box", above)
+        return (same || dotHomeFor.map({ CFEqual($0, el) }) == true ? dotHome : (fits(below) ? .below : .above)) == .above ? above : below
     }
 
     // MARK: hover card
