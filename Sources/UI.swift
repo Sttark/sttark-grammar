@@ -137,11 +137,14 @@ struct FootButton: View {
 // MARK: corner badge
 
 /// The one small round dot (12 px) in the box's corner, like Grammarly's: gray and spinning while checking, red with the
-/// number of word fixes, blue when there's a tidy-up, red with a blue corner when there are both.
+/// number of word fixes, blue when there's a tidy-up, red with a blue corner when there are both. A thin ring turns
+/// around a red or blue dot while a check is still running, and a green check shows for a moment when all checks
+/// are done and found nothing.
 struct DotView: View {
     let count: Int
     let checking: Bool
     let tidy: Bool
+    var done = false
     let click: () -> Void
 
     var body: some View {
@@ -151,6 +154,8 @@ struct DotView: View {
                     .overlay {
                         if count > 0 {
                             Text(count > 99 ? "99+" : "\(count)").font(.system(size: count > 9 ? 5.5 : 7.5, weight: .bold)).foregroundStyle(.white)
+                        } else if done {
+                            Image(systemName: "checkmark").font(.system(size: 6.5, weight: .heavy)).foregroundStyle(.white)
                         } else if tidy {
                             Image(systemName: "wand.and.stars").font(.brand(6, .bold)).foregroundStyle(.white)
                         } else {
@@ -161,6 +166,7 @@ struct DotView: View {
                     Circle().fill(Color(nsColor: Kind.tidy.color)).frame(width: 5, height: 5).offset(x: 1.5, y: -1.5)
                 }
             }
+            .overlay { if checking && (count > 0 || tidy) { Ring() } }
         }
         .buttonStyle(.plain)
         .padding(3)
@@ -168,8 +174,24 @@ struct DotView: View {
 
     var fill: Color {
         if count > 0 { return Color(nsColor: Kind.spelling.color) }
+        if done { return Color(nsColor: Brand.green) }
         if tidy { return Color(nsColor: Kind.tidy.color) }
         return Color.gray.opacity(0.85)
+    }
+}
+
+/// A thin arc that turns around the dot: a check is still running behind a red number or a blue tidy-up.
+struct Ring: View {
+    var size: CGFloat = 16.5
+    var body: some View {
+        TimelineView(.animation) { ctx in
+            ZStack {
+                Circle().stroke(Color.gray.opacity(0.25), lineWidth: 1.6)
+                Circle().trim(from: 0, to: 0.3).stroke(Color.gray, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+                    .rotationEffect(.degrees(ctx.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.1) / 1.1 * 360))
+            }
+            .frame(width: size, height: size)
+        }
     }
 }
 
@@ -186,9 +208,12 @@ struct Spinner: View {
 
 /// What hovering the dot shows: Fix all and Tidy up, one click each, with the tidied message to look at.
 struct DotCardView: View {
+    /// Where the tidy-up stands: offered, still being checked, checked with nothing to change, or too short to check.
+    enum Layout { case offer, checking, fine, short }
     let count: Int
     let checking: Bool
     let tidy: Tidy?
+    var layout: Layout = .short
     let warn: Bool
     let fixAll: () -> Void
     let tidyUp: () -> Void
@@ -200,6 +225,16 @@ struct DotCardView: View {
                     button: "Fix all", main: true, action: fixAll)
             }
             if count > 0 && tidy != nil { Divider() }
+            if count > 0 && (layout == .checking || layout == .fine) {
+                Divider()
+                HStack(spacing: 7) {
+                    if layout == .checking { Ring(size: 10) } else {
+                        Image(systemName: "checkmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(Color(nsColor: Brand.greenText))
+                    }
+                    Text(layout == .checking ? "Still checking the layout…" : "Layout looks fine").font(.brand(11.5)).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
+            }
             if let t = tidy {
                 row(color: Kind.tidy.color, title: "Tidy up", detail: t.summary, button: "Tidy up", main: count == 0, action: tidyUp)
                 // as tall as the message, and only scrolls when it's longer than the card has room for
@@ -218,7 +253,7 @@ struct DotCardView: View {
                 }
             }
             if count == 0 && tidy == nil {
-                Text(checking ? "Checking…" : "Nothing to fix").font(.brand(12)).foregroundStyle(.secondary).padding(12)
+                Text(checking ? "Checking…" : layout == .fine ? "Nothing to fix, and the layout looks fine" : "Nothing to fix").font(.brand(12)).foregroundStyle(.secondary).padding(12)
             }
         }
         .frame(width: 340)
