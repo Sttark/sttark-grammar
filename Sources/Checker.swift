@@ -459,6 +459,31 @@ enum Diff {
         return out as String
     }
 
+    /// Where an email's forwarded or quoted part starts ("---------- Forwarded message ---------", "On Mon, Oct 12,
+    /// 2026 at 10:18 AM Dan Frist <dan@…> wrote:", Outlook's "-----Original Message-----" or its From:/Sent:
+    /// header): the start of that line. Nothing from there on is yours to check.
+    static func quoteStart(_ s: NSString) -> Int? {
+        let patterns = [
+            #"^[ \t]*-{3,}[ \t]*(Forwarded message|Original Message)[ \t]*-{3,}"#,
+            #"^[ \t]*Begin forwarded message:"#,
+            #"^[ \t]*On [^\n]{4,200}\n?[^\n]{0,120}wrote:[ \t]*$"#,
+            #"^[ \t]*From:[^\n]+\n(?:[^\n]*\n)?[ \t]*(Sent|Date):"#,
+        ]
+        var first: Int?
+        for p in patterns {
+            guard let re = try? NSRegularExpression(pattern: p, options: [.anchorsMatchLines, .caseInsensitive]),
+                  let m = re.firstMatch(in: s as String, range: NSRange(location: 0, length: s.length)) else { continue }
+            first = min(first ?? m.range.location, m.range.location)
+        }
+        return first
+    }
+
+    /// The part of a message that's yours: everything before a forwarded or quoted email.
+    static func ownPart(_ s: String) -> String {
+        let ns = s as NSString
+        return quoteStart(ns).map { ns.substring(to: $0) } ?? s
+    }
+
     /// Every tag sits at the start, with nothing but spaces between them: Tidy up can replace just the text after.
     static func tagsAtStart(_ s: NSString) -> Bool {
         guard let last = tags(in: s).last else { return false }

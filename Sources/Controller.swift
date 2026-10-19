@@ -402,9 +402,10 @@ final class Controller: NSObject, NSMenuDelegate {
         AX.setSelectedRange(el, boxMap(el).map { Self.toBox(r, $0) } ?? r)
     }
 
+    /// The paragraphs you wrote: a forwarded or quoted email below them isn't checked or fixed.
     func paragraphs(_ s: NSString) -> [(NSRange, String)] {
         var out: [(NSRange, String)] = []
-        s.enumerateSubstrings(in: NSRange(location: 0, length: s.length), options: [.byParagraphs]) { sub, r, _, _ in
+        s.enumerateSubstrings(in: NSRange(location: 0, length: Diff.quoteStart(s) ?? s.length), options: [.byParagraphs]) { sub, r, _, _ in
             if let sub { out.append((r, sub)) }
         }
         return out
@@ -596,7 +597,7 @@ final class Controller: NSObject, NSMenuDelegate {
 
     /// The message is long enough for a tidy-up check.
     var tidyEligible: Bool {
-        let key = Diff.flattenTags(value as String)
+        let key = Diff.flattenTags(Diff.ownPart(value as String))
         let words = key.split(whereSeparator: \.isWhitespace).count, lines = key.split(separator: "\n").count
         return tidyOn && value.length <= 8000 && (words >= 3 || lines >= 3)
     }
@@ -988,7 +989,7 @@ final class Controller: NSObject, NSMenuDelegate {
         let key = value as String
         guard tidyOn, !tidyInflight.contains(key), tidyInflight.count < 3, !tidyChecked.contains(key), value.length <= 8000 else { return }
         // a tag counts as the name it shows, not as the lines a box like Google Chat reports for it
-        let flat = Diff.flattenTags(key)
+        let flat = Diff.flattenTags(Diff.ownPart(key))
         let words = flat.split(whereSeparator: \.isWhitespace).count
         let lines = flat.split(separator: "\n").count
         guard words >= 3 || lines >= 3 else { return }   // the same floor as the spell check
@@ -1000,7 +1001,8 @@ final class Controller: NSObject, NSMenuDelegate {
             return
         }
         tidyInflight.insert(key)
-        let text = Diff.flattenTags(displayText(el))
+        // only what you wrote above a forwarded or quoted email
+        let text = Diff.flattenTags(Diff.ownPart(displayText(el))).trimmingCharacters(in: .whitespacesAndNewlines)
         note("tidy check in \(appName) with \(model.rawValue): \(words) words, \(lines) lines, sent \(String(text.prefix(2000)).debugDescription)")
         let m = model
         let plainBox = noBold.contains(appID)
@@ -1103,6 +1105,10 @@ final class Controller: NSObject, NSMenuDelegate {
         if let last = Diff.tags(in: value).last, Diff.tagsAtStart(value) {
             return applyTidyAfterTags(el, t, after: last.0.upperBound, names: Diff.tags(in: value).map(\.1), spaced: spaced)
         }
+        // A forwarded or quoted email below stays as it is: paste only over what you wrote above it.
+        if let cut = Diff.quoteStart(value) {
+            return applyTidyAbove(el, t, end: cut, spaced: spaced)
+        }
         let first = t.lines[0].text
         func finish(_ ok: Bool) {
             refresh(el)
@@ -1187,6 +1193,37 @@ final class Controller: NSObject, NSMenuDelegate {
             self.paste(lead + tail.plain(blankLines: !spaced)) {
                 Self.wait(until: { let v = AX.string(el, kAXValueAttribute) ?? ""; return v != before && Diff.flattenTags(v).lowercased().contains(want) }, tries: 100) { landed in
                     if !landed { note("tidy paste after tags didn't show") }
+                    finish(landed)
+                }
+            }
+        }
+    }
+
+    /// Tidy up for an email with a forwarded or quoted email below: the tidied text goes over what you wrote above
+    /// it, never over the quote. If that text can't be selected exactly, nothing is pasted.
+    func applyTidyAbove(_ el: AXUIElement, _ t: Tidy, end: Int, spaced: Bool) {
+        func finish(_ ok: Bool) {
+            refresh(el)
+            lastChange = Date()
+            lastOwnEdit = Date()
+            editing = false
+            note(ok ? "tidy up done, quoted email kept" : "tidy up didn't go in")
+            updateStatus()
+        }
+        // up to the end of your last line: the empty lines before the quote stay
+        var stop = end
+        while stop > 0, let c = Unicode.Scalar(value.character(at: stop - 1)), CharacterSet.whitespacesAndNewlines.contains(c) { stop -= 1 }
+        guard stop > 0, let first = t.lines.first?.text else { return finish(false) }
+        let range = NSRange(location: 0, length: stop)
+        let old = value.substring(with: range)
+        let want = first.split(separator: " ").prefix(4).joined(separator: " ").lowercased()
+        note("tidy up in \(appName) above a quoted email: \(t.lines.count) lines")
+        select(el, range, expect: old) { ok in
+            guard ok else { note("tidy: couldn't select the text above the quoted email; nothing pasted"); return finish(false) }
+            let before = AX.string(el, kAXValueAttribute)
+            self.paste(t.plain(blankLines: !spaced), html: t.html(blankLines: !spaced)) {
+                Self.wait(until: { let v = AX.string(el, kAXValueAttribute) ?? ""; return v != before && v.lowercased().contains(want) }, tries: 100) { landed in
+                    if !landed { note("tidy paste above the quoted email didn't show") }
                     finish(landed)
                 }
             }
