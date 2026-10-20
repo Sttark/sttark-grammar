@@ -238,7 +238,7 @@ struct DotCardView: View {
             if layout == .tagged || layout == .picture {
                 if count > 0 { Divider() }
                 Text(layout == .tagged ? "Tidy up is off for this message: a tag in the middle would become plain text."
-                     : "Tidy up is off for this message: it would take out the pictures.")
+                     : "Tidy up is off for this message: the text around its pictures couldn't be lined up.")
                     .font(.brand(11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 12).padding(.vertical, 8)
             }

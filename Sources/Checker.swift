@@ -109,6 +109,33 @@ struct Tidy {
     var bold: [String]          // phrases to make bold
     var summary: String
 
+    init(lines: [Line], bold: [String], summary: String) {
+        self.lines = lines
+        self.bold = bold
+        self.summary = summary
+    }
+
+    /// The tidied text cut at its "[picture N]" lines: one piece for each run of text around the pictures, in
+    /// order, or nil if the pictures didn't all come back once, in order.
+    func split(pictures n: Int) -> [Tidy]? {
+        var pieces: [[Line]] = [[]], next = 1
+        for l in lines {
+            if let m = l.text.range(of: #"^\[picture (\d+)\]$"#, options: .regularExpression), l.marker == nil {
+                guard Int(l.text[m].dropFirst(9).dropLast()) == next else { return nil }
+                next += 1
+                pieces.append([])
+            } else {
+                pieces[pieces.count - 1].append(l)
+            }
+        }
+        guard next == n + 1 else { return nil }
+        return pieces.map { ls in
+            var ls = ls
+            if !ls.isEmpty { ls[0].blankBefore = false }
+            return Tidy(lines: ls, bold: bold, summary: summary)
+        }
+    }
+
     /// Reads Claude's copy: "- " and "1. " lines are list items, empty lines are blank lines, **x** is bold.
     /// Then the fixed layout rules: a list's intro line is a line of its own right above its items, with a
     /// blank line above the intro and below the list wherever there's text there.
@@ -215,6 +242,7 @@ enum TidyChecker {
     - Count the separate things the message lists, asks for or asks about. Three or more, whether in one sentence (a request naming four things to cover counts) or across a few in a row (three or more questions in a row count), always become a list; this is not a judgment call, with every one of those things in it: a line of its own introducing the list that ends with a colon, then one item per line starting with "- ", or "1. ", "2. " when the order matters. Items start with a capital letter and have no period.
     - Wrap in **double asterisks** the one or two things a reader must not miss in a long message: a deadline or a required action, or else the one sentence that states the main point, so someone skimming still gets it. Bold the whole sentence or phrase, copied exactly. None in a short or casual message.
     - An @mention at the start of the message stays first, on the same line as the words right after it.
+    - A line like [picture 1] marks a picture in the message. Keep every one exactly as written, on a line of its own, in the same order, with the same text before and after it. Never move text across a picture.
     - Keep the user's words, voice and meaning. Reword only as much as a list needs to read well. Never add, drop or soften a point. Keep greetings and sign-offs as they are.
     If the layout is already fine, return the message unchanged and set "changed" to false. "summary" says what you changed in at most 12 plain words.
     """
