@@ -53,6 +53,8 @@ final class Controller: NSObject, NSMenuDelegate {
     var tidyDismissed: Set<String> = []
     /// Messages Tidy up left alone because a tag sits in the middle (a paste would turn it into plain text).
     var tagSkipped: Set<String> = []
+    /// Messages with a picture in what you wrote: Tidy up pastes text only, so it isn't offered.
+    var pictureSkipped: Set<String> = []
     /// Apps whose box drops bold from a paste (the Claude app's chat box has no bold). Tidy-ups there leave bold out.
     var noBold: Set<String> {
         get { Set(defaults.stringArray(forKey: "noBold") ?? ["com.anthropic.claudefordesktop"]) }
@@ -634,7 +636,7 @@ final class Controller: NSObject, NSMenuDelegate {
         if wasChecking && !checking && count == 0 && !tidyNow { doneAt = Date() }
         wasChecking = checking
         let done = !checking && count == 0 && !tidyNow && Date().timeIntervalSince(doneAt) < 1.5
-        let layoutFine = !checking && !tidyNow && tidyEligible && tidyChecked.contains(value as String) && !tagSkipped.contains(value as String)
+        let layoutFine = !checking && !tidyNow && tidyEligible && tidyChecked.contains(value as String) && !tagSkipped.contains(value as String) && !pictureSkipped.contains(value as String)
         guard count > 0 || checking || tidyNow || done else { badge.orderOut(nil); return }
         let state = "\(count) \(checking) \(tidyNow) \(done) \(layoutFine)"
         if state != badgeState || badge.contentView == nil {
@@ -829,7 +831,7 @@ final class Controller: NSObject, NSMenuDelegate {
         hideCard()
         let checking = isChecking
         let rich = element.map { !AX.children($0).isEmpty } ?? false
-        let layout: DotCardView.Layout = tidy != nil ? .offer : tagSkipped.contains(value as String) ? .tagged : !tidyEligible ? .short : tidyChecking ? .checking : .fine
+        let layout: DotCardView.Layout = tidy != nil ? .offer : tagSkipped.contains(value as String) ? .tagged : pictureSkipped.contains(value as String) ? .picture : !tidyEligible ? .short : tidyChecking ? .checking : .fine
         let view = DotCardView(count: issues.filter(\.hasFix).count, checking: checking, tidy: tidy, layout: layout, warn: rich,
                                fixAll: { [weak self] in self?.hideCard(); self?.fixAll() },
                                tidyUp: { [weak self] in self?.hideCard(); self?.applyTidy() })
@@ -1006,6 +1008,13 @@ final class Controller: NSObject, NSMenuDelegate {
             note("tidy: skipped in \(appName), a tag sits in the middle of the message")
             return
         }
+        // A paste can't put a picture back either (a Gmail draft's pasted images)
+        if hasPicture(el) {
+            tidyChecked.insert(key)
+            pictureSkipped.insert(key)
+            note("tidy: skipped in \(appName), the message has a picture in it")
+            return
+        }
         // Asana's mention chips: the same rules as Google Chat's tags
         let chips = pills(el)
         if let chips, !pillsAtStart(chips) {
@@ -1110,6 +1119,14 @@ final class Controller: NSObject, NSMenuDelegate {
     /// and Return is never pressed (it sends in the Claude app and Slack).
     func applyTidy() {
         guard let el = element, let t = tidy, !editing else { return }
+        // a picture added after the check: the paste would take it out
+        if hasPicture(el) {
+            pictureSkipped.insert(value as String)
+            tidyCache[value as String] = nil
+            note("tidy up refused in \(appName): the message has a picture in it")
+            updateStatus()
+            return
+        }
         hideCard()
         editing = true
         // a box that already spaces its paragraphs (like a web page) gets no empty lines, or they'd look doubled
@@ -1261,6 +1278,24 @@ final class Controller: NSObject, NSMenuDelegate {
         }
         pillsFound = Pills(names: names, ranges: ranges, text: paras.joined(separator: "\n"))
         return pillsFound
+    }
+
+    /// A picture in what you wrote, above any forwarded or quoted email. Emoji and the faces on mention chips are
+    /// pictures too, but small ones: only something bigger than a line of text counts.
+    func hasPicture(_ el: AXUIElement) -> Bool {
+        var seen = 0, quoted = false
+        func walk(_ e: AXUIElement) -> Bool {
+            seen += 1
+            guard seen < 4000, !quoted else { return false }
+            let role = AX.string(e, kAXRoleAttribute) ?? ""
+            if role == "AXImage", let f = AX.frame(e), f.height >= 32 || f.width >= 48 { return true }
+            if role == "AXStaticText" {
+                if let t = AX.string(e, kAXValueAttribute), Diff.quoteStart((t + "\n") as NSString) != nil || t.contains("Forwarded message") { quoted = true }
+                return false
+            }
+            return AX.children(e).contains(where: walk)
+        }
+        return walk(el)
     }
 
     /// Every chip comes before anything you wrote, with only spaces and line breaks around them.

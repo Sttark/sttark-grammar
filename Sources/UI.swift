@@ -219,7 +219,7 @@ struct Spinner: View {
 /// What hovering the dot shows: Fix all and Tidy up, one click each, with the tidied message to look at.
 struct DotCardView: View {
     /// Where the tidy-up stands: offered, still being checked, checked with nothing to change, or too short to check.
-    enum Layout { case offer, checking, fine, short, tagged }
+    enum Layout { case offer, checking, fine, short, tagged, picture }
     let count: Int
     let checking: Bool
     let tidy: Tidy?
@@ -235,9 +235,10 @@ struct DotCardView: View {
                     button: "Fix all", main: true, action: fixAll)
             }
             if count > 0 && tidy != nil { Divider() }
-            if layout == .tagged {
+            if layout == .tagged || layout == .picture {
                 if count > 0 { Divider() }
-                Text("Tidy up is off for this message: a tag in the middle would become plain text.")
+                Text(layout == .tagged ? "Tidy up is off for this message: a tag in the middle would become plain text."
+                     : "Tidy up is off for this message: it would take out the pictures.")
                     .font(.brand(11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 12).padding(.vertical, 8)
             }
@@ -268,7 +269,7 @@ struct DotCardView: View {
                         .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 12).padding(.bottom, 10)
                 }
             }
-            if count == 0 && tidy == nil && layout != .tagged {
+            if count == 0 && tidy == nil && layout != .tagged && layout != .picture {
                 Text(checking ? "Checking…" : layout == .fine ? "Nothing to fix, and the layout looks fine" : "Nothing to fix").font(.brand(12)).foregroundStyle(.secondary).padding(12)
             }
         }
