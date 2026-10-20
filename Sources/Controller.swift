@@ -1228,6 +1228,15 @@ final class Controller: NSObject, NSMenuDelegate {
         // Asana drops a space at the start of a paste: the space after the last mention stays out of the selection
         var start = tagEnd
         if keepSpace { while start < value.length, let c = Unicode.Scalar(value.character(at: start)), c == " " || c == "\u{00A0}" { start += 1 } }
+        // mentions on a line of their own (the tidied first line is only the names): they keep their line and the
+        // blank line under them, and the paste starts where your words start
+        var ownLine = false
+        do {
+            var h = t.lines.first?.text ?? ""
+            for n in names { h = h.trimmingCharacters(in: .whitespaces); if h.lowercased().hasPrefix(n.lowercased()) { h = String(h.dropFirst(n.count)) } }
+            ownLine = h.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+        if ownLine { while start < value.length, let c = Unicode.Scalar(value.character(at: start)), CharacterSet.whitespacesAndNewlines.contains(c) || c == "\u{00A0}" { start += 1 } }
         var tail = t
         var head = tail.lines.first?.text ?? ""
         for n in names {
@@ -1250,11 +1259,11 @@ final class Controller: NSObject, NSMenuDelegate {
         let old = value.substring(with: range)
         let want = first.split(separator: " ").prefix(4).joined(separator: " ").lowercased()
         note("tidy up in \(appName) after \(names.count) tag\(names.count == 1 ? "" : "s"): \(tail.lines.count) lines")
-        select(el, range, expect: old) { ok in
+        select(el, range, expect: old, loose: true) { ok in
             guard ok else { note("tidy: couldn't select the text after the tags; nothing pasted"); return finish(false) }
             let before = AX.string(el, kAXValueAttribute)
             // the space between the last tag and the words stays (a no-break space, so a rich box keeps it)
-            let lead = !keepSpace && old.first.map { $0 == " " || $0 == "\u{00A0}" } == true ? "\u{00A0}" : ""
+            let lead = !keepSpace && !ownLine && old.first.map { $0 == " " || $0 == "\u{00A0}" } == true ? "\u{00A0}" : ""
             // plain text only: a formatted paste can start a new paragraph and push the words below the tag
             // Asana keeps a formatted paste on the line after its mentions, and needs it for blank lines and bullets
             self.paste(lead + tail.plain(blankLines: !spaced), html: keepSpace ? tail.html(blankLines: !spaced) : nil) {
@@ -1295,7 +1304,27 @@ final class Controller: NSObject, NSMenuDelegate {
             if AX.string(e, kAXRoleAttribute) == "AXStaticText" { return AX.string(e, kAXValueAttribute) ?? "" }
             return AX.children(e).map(leafText).joined()
         }
-        let paras = AX.children(el).map(leafText)
+        // a list comes as its items, each on a line of its own with its number or bullet
+        func isBlock(_ e: AXUIElement) -> Bool {
+            AX.string(e, kAXRoleAttribute) == "AXList" || (AX.attr(e, "AXDOMClassList") as? [String])?.contains("ProsemirrorEditor-paragraph") == true
+        }
+        func blockLines(_ e: AXUIElement) -> [String] {
+            guard AX.string(e, kAXRoleAttribute) == "AXList" else { return [leafText(e)] }
+            return AX.children(e).flatMap { item -> [String] in
+                var kids = AX.children(item), marker = "- "
+                if let first = kids.first, !isBlock(first) {
+                    let m = leafText(first).trimmingCharacters(in: .whitespaces)
+                    if m.range(of: #"^(\d+[.)]|[•◦▪·*-])$"#, options: .regularExpression) != nil {
+                        marker = m.first!.isNumber ? m + " " : "- "
+                        kids.removeFirst()
+                    }
+                }
+                let inner = kids.flatMap(blockLines)
+                guard let head = inner.first else { return [marker.trimmingCharacters(in: .whitespaces)] }
+                return [marker + head] + inner.dropFirst()
+            }
+        }
+        let paras = AX.children(el).flatMap(blockLines)
         guard !names.isEmpty else { return nil }
         var ranges: [NSRange] = [], from = 0
         for n in names {
@@ -1395,7 +1424,7 @@ final class Controller: NSObject, NSMenuDelegate {
             let afterPicture = i > 0 && range.length > 1
             let sel = afterPicture ? NSRange(location: range.location + 1, length: range.length - 1) : range
             let old = value.substring(with: sel)
-            select(el, sel, expect: old) { ok in
+            select(el, sel, expect: old, loose: true) { ok in
                 guard ok else { return finish(false, "couldn't select piece \(i + 1)") }
                 let before = AX.string(el, kAXValueAttribute)
                 let want = piece.lines[0].text.split(separator: " ").prefix(4).joined(separator: " ").lowercased()
@@ -1448,7 +1477,7 @@ final class Controller: NSObject, NSMenuDelegate {
         let old = value.substring(with: range)
         let want = first.split(separator: " ").prefix(4).joined(separator: " ").lowercased()
         note("tidy up in \(appName) above a quoted email: \(t.lines.count) lines")
-        select(el, range, expect: old) { ok in
+        select(el, range, expect: old, loose: true) { ok in
             guard ok else { note("tidy: couldn't select the text above the quoted email; nothing pasted"); return finish(false) }
             let before = AX.string(el, kAXValueAttribute)
             self.paste(t.plain(blankLines: !spaced), html: t.html(blankLines: !spaced)) {
@@ -1489,8 +1518,21 @@ final class Controller: NSObject, NSMenuDelegate {
     /// trusted at the end of a line: rich boxes like the Claude app may take the line break too, and their
     /// positions don't count it. If the selection runs long, select all but the last letter and take one more
     /// with Shift-Right, which stays on the line.
-    func select(_ el: AXUIElement, _ r: NSRange, expect text: String, done: @escaping (Bool) -> Void) {
+    func select(_ el: AXUIElement, _ r: NSRange, expect text: String, loose: Bool = false, done: @escaping (Bool) -> Void) {
         let selected = { AX.string(el, kAXSelectedTextAttribute) }
+        // A block of lines (the text after a mention, above a quoted email, between pictures): a web box reports
+        // its selection with its own line breaks and list numbers, so only the words and marks have to match.
+        // A picture (U+FFFC) or a tag's marks still count, so neither can slip into the selection.
+        if loose {
+            let words = { (s: String) in s.unicodeScalars.filter { !CharacterSet.whitespacesAndNewlines.contains($0) }.map(String.init).joined() }
+            let want = words(text)
+            select(el, r)
+            Self.wait(until: { words(selected() ?? "") == want }) { ok in
+                if !ok { log("selected \((selected() ?? "nil").prefix(200).debugDescription) for \(text.prefix(200).debugDescription)") }
+                done(ok)
+            }
+            return
+        }
         func shiftRight() {
             if r.length > 1 { select(el, NSRange(location: r.location, length: r.length - 1)) } else { select(el, NSRange(location: r.location, length: 0)) }
             Self.wait(until: { r.length == 1 ? self.selection(el)?.length == 0 : selected() == String(text.dropLast()) }) { ok in
