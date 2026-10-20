@@ -160,6 +160,18 @@ struct Tidy {
             out.append(Line(text: t, marker: marker, blankBefore: blank))
             blank = false
         }
+        // One numbered line on its own isn't a list: it's an answer to a numbered question ("1 yes"), and stays a
+        // line of text with its number
+        for i in out.indices where out[i].marker == "1. " {
+            let alone = (i == 0 || out[i - 1].marker == nil) && (i == out.count - 1 || out[i + 1].marker == nil)
+            if alone {
+                let line = text.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+                    .first { $0.hasSuffix(out[i].text) && $0.first?.isNumber == true }
+                let n = line.map { String($0.prefix { $0.isNumber }) }
+                out[i].text = "\(n ?? "1"). " + out[i].text
+                out[i].marker = nil
+            }
+        }
         var k = 0
         while k < out.count {
             if out[k].marker != nil && (k == 0 || out[k - 1].marker == nil) {
@@ -242,6 +254,7 @@ enum TidyChecker {
     - Count the separate things the message lists, asks for or asks about. Three or more, whether in one sentence (a request naming four things to cover counts) or across a few in a row (three or more questions in a row count), always become a list; this is not a judgment call, with every one of those things in it: a line of its own introducing the list that ends with a colon, then one item per line starting with "- ", or "1. ", "2. " when the order matters. Items start with a capital letter and have no period.
     - Wrap in **double asterisks** the one or two things a reader must not miss in a long message: a deadline or a required action, or else the one sentence that states the main point, so someone skimming still gets it. Bold the whole sentence or phrase, copied exactly. None in a short or casual message.
     - An @mention at the start of the message stays first, on the same line as the words right after it.
+    - A line that starts with a number answering a numbered question ("1 yes", "2: the blue one") is an answer, not a list. Keep its number at the start, as written.
     - A line like [picture 1] marks a picture in the message. Keep every one exactly as written, on a line of its own, in the same order, with the same text before and after it. Never move text across a picture.
     - Keep the user's words, voice and meaning. Reword only as much as a list needs to read well. Never add, drop or soften a point. Keep greetings and sign-offs as they are.
     If the layout is already fine, return the message unchanged and set "changed" to false. "summary" says what you changed in at most 12 plain words.
