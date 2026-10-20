@@ -1121,7 +1121,7 @@ final class Controller: NSObject, NSMenuDelegate {
         }
         // Asana's mention chips at the start stay too, the same way
         if let chips = pills(el), pillsAtStart(chips), let last = chips.ranges.last {
-            return applyTidyAfterTags(el, t, after: last.upperBound, names: chips.names.map { "@" + $0 }, spaced: spaced)
+            return applyTidyAfterTags(el, t, after: last.upperBound, names: chips.names.map { "@" + $0 }, spaced: spaced, keepSpace: true)
         }
         // A forwarded or quoted email below stays as it is: paste only over what you wrote above it.
         if let cut = Diff.quoteStart(value) {
@@ -1179,7 +1179,10 @@ final class Controller: NSObject, NSMenuDelegate {
 
     /// Tidy up for a message that starts with tags: the tidied text without its leading "@Name"s goes over the text
     /// after the last tag, never over the tags. If that text can't be selected exactly, nothing is pasted.
-    func applyTidyAfterTags(_ el: AXUIElement, _ t: Tidy, after start: Int, names: [String], spaced: Bool) {
+    func applyTidyAfterTags(_ el: AXUIElement, _ t: Tidy, after tagEnd: Int, names: [String], spaced: Bool, keepSpace: Bool = false) {
+        // Asana drops a space at the start of a paste: the space after the last mention stays out of the selection
+        var start = tagEnd
+        if keepSpace { while start < value.length, let c = Unicode.Scalar(value.character(at: start)), c == " " || c == "\u{00A0}" { start += 1 } }
         var tail = t
         var head = tail.lines.first?.text ?? ""
         for n in names {
@@ -1206,7 +1209,7 @@ final class Controller: NSObject, NSMenuDelegate {
             guard ok else { note("tidy: couldn't select the text after the tags; nothing pasted"); return finish(false) }
             let before = AX.string(el, kAXValueAttribute)
             // the space between the last tag and the words stays (a no-break space, so a rich box keeps it)
-            let lead = old.first.map { $0 == " " || $0 == "\u{00A0}" } == true ? "\u{00A0}" : ""
+            let lead = !keepSpace && old.first.map { $0 == " " || $0 == "\u{00A0}" } == true ? "\u{00A0}" : ""
             // plain text only: a formatted paste can start a new paragraph and push the words below the tag
             self.paste(lead + tail.plain(blankLines: !spaced)) {
                 Self.wait(until: { let v = AX.string(el, kAXValueAttribute) ?? ""; return v != before && Diff.flattenTags(v).lowercased().contains(want) }, tries: 100) { landed in
