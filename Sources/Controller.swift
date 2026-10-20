@@ -411,6 +411,12 @@ final class Controller: NSObject, NSMenuDelegate {
         return out
     }
 
+    /// A fix never goes over an Asana mention chip: the paste would turn it into plain text.
+    func notOnChip(_ i: Issue) -> Bool {
+        guard let el = element, let chips = pills(el) else { return true }
+        return !chips.ranges.contains { NSIntersectionRange($0, i.range).length > 0 || ($0.location <= i.range.location && i.range.location < $0.upperBound) }
+    }
+
     func allowed(_ i: Issue) -> Bool {
         if ignored.contains(i.ignoreKey) { return false }
         // a dictionary word is spelled right, but a fix that only gives it a capital still shows
@@ -425,7 +431,7 @@ final class Controller: NSObject, NSMenuDelegate {
     func showSaved() {
         for (r, t) in paragraphs(value) {
             guard let saved = cache[t] else { continue }
-            let want = saved.filter(allowed).map { $0.shifted(by: r.location) }
+            let want = saved.filter(allowed).map { $0.shifted(by: r.location) }.filter(notOnChip)
             let have = issues.filter { $0.range.location >= r.location && $0.range.location < r.upperBound }
             if have.map(\.range) == want.map(\.range) && have.map(\.suggestion) == want.map(\.suggestion) { continue }
             issues.removeAll { $0.range.location >= r.location && $0.range.location < r.upperBound }
@@ -435,7 +441,7 @@ final class Controller: NSObject, NSMenuDelegate {
     }
 
     func issuesFromCache(_ s: NSString) -> [Issue] {
-        paragraphs(s).flatMap { r, t in (cache[t] ?? []).filter(allowed).map { $0.shifted(by: r.location) } }
+        paragraphs(s).flatMap { r, t in (cache[t] ?? []).filter(allowed).map { $0.shifted(by: r.location) } }.filter { s === value ? notOnChip($0) : true }
     }
 
     /// Keep underlines in place while you type: move the ones after your edit, drop the ones it touches.
@@ -506,7 +512,7 @@ final class Controller: NSObject, NSMenuDelegate {
         log("got \(res.issues.count) issues, tokens \(res.inputTokens)/\(res.outputTokens): " + res.issues.map { "\($0.original)->\($0.suggestion)" }.joined(separator: ", "))
         for (r, t) in paragraphs(value) where t == text {
             issues.removeAll { $0.range.location >= r.location && $0.range.location < r.upperBound }
-            issues += res.issues.filter(allowed).map { $0.shifted(by: r.location) }
+            issues += res.issues.filter(allowed).map { $0.shifted(by: r.location) }.filter(notOnChip)
         }
         issues.sort { $0.range.location < $1.range.location }
         updateStatus()
@@ -1000,9 +1006,17 @@ final class Controller: NSObject, NSMenuDelegate {
             note("tidy: skipped in \(appName), a tag sits in the middle of the message")
             return
         }
+        // Asana's mention chips: the same rules as Google Chat's tags
+        let chips = pills(el)
+        if let chips, !pillsAtStart(chips) {
+            tidyChecked.insert(key)
+            tagSkipped.insert(key)
+            note("tidy: skipped in \(appName), a mention sits in the middle of the message")
+            return
+        }
         tidyInflight.insert(key)
         // only what you wrote above a forwarded or quoted email
-        let text = Diff.flattenTags(Diff.ownPart(displayText(el))).trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = (chips?.text ?? Diff.flattenTags(Diff.ownPart(displayText(el)))).trimmingCharacters(in: .whitespacesAndNewlines)
         note("tidy check in \(appName) with \(model.rawValue): \(words) words, \(lines) lines, sent \(String(text.prefix(2000)).debugDescription)")
         let m = model
         let plainBox = noBold.contains(appID)
@@ -1105,6 +1119,10 @@ final class Controller: NSObject, NSMenuDelegate {
         if let last = Diff.tags(in: value).last, Diff.tagsAtStart(value) {
             return applyTidyAfterTags(el, t, after: last.0.upperBound, names: Diff.tags(in: value).map(\.1), spaced: spaced)
         }
+        // Asana's mention chips at the start stay too, the same way
+        if let chips = pills(el), pillsAtStart(chips), let last = chips.ranges.last {
+            return applyTidyAfterTags(el, t, after: last.upperBound, names: chips.names.map { "@" + $0 }, spaced: spaced)
+        }
         // A forwarded or quoted email below stays as it is: paste only over what you wrote above it.
         if let cut = Diff.quoteStart(value) {
             return applyTidyAbove(el, t, end: cut, spaced: spaced)
@@ -1197,6 +1215,56 @@ final class Controller: NSObject, NSMenuDelegate {
                 }
             }
         }
+    }
+
+    /// Asana's mention chips (@Christopher Price, a task, a project): links the box shows as a name with its
+    /// picture. Its text gives only the name, with a stray line break or two, so they're read from the box's parts.
+    /// Each comes with where its name sits in our text, in order; and the message as you'd read it, each chip
+    /// written as "@Name", paragraphs one per line.
+    struct Pills { var names: [String]; var ranges: [NSRange]; var text: String }
+    var pillsKey = ""
+    var pillsFound: Pills?
+
+    func pills(_ el: AXUIElement) -> Pills? {
+        let key = "\(value.hash) \(value.length)"
+        if key == pillsKey { return pillsFound }
+        pillsKey = key
+        pillsFound = nil
+        guard value.length <= 8000 else { return nil }
+        var names: [String] = [], seen = 0
+        func isPill(_ e: AXUIElement) -> Bool {
+            AX.string(e, kAXRoleAttribute) == "AXLink" && ((AX.attr(e, "AXDOMClassList") as? [String])?.contains("HypertextLink-navigationPill") == true)
+        }
+        func leafText(_ e: AXUIElement) -> String {
+            seen += 1
+            guard seen < 3000 else { return "" }
+            if isPill(e) {
+                let name = AX.children(e).compactMap { AX.string($0, kAXValueAttribute) }.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+                names.append(name)
+                return "@" + name
+            }
+            if AX.string(e, kAXRoleAttribute) == "AXStaticText" { return AX.string(e, kAXValueAttribute) ?? "" }
+            return AX.children(e).map(leafText).joined()
+        }
+        let paras = AX.children(el).map(leafText)
+        guard !names.isEmpty else { return nil }
+        var ranges: [NSRange] = [], from = 0
+        for n in names {
+            let r = value.range(of: n, options: [], range: NSRange(location: from, length: value.length - from))
+            guard r.location != NSNotFound else { return nil }
+            ranges.append(r)
+            from = r.upperBound
+        }
+        pillsFound = Pills(names: names, ranges: ranges, text: paras.joined(separator: "\n"))
+        return pillsFound
+    }
+
+    /// Every chip comes before anything you wrote, with only spaces and line breaks around them.
+    func pillsAtStart(_ p: Pills) -> Bool {
+        guard let last = p.ranges.last else { return false }
+        let head = NSMutableString(string: value.substring(to: last.upperBound))
+        for r in p.ranges.reversed() { head.replaceCharacters(in: r, with: "") }
+        return (head as String).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Tidy up for an email with a forwarded or quoted email below: the tidied text goes over what you wrote above
