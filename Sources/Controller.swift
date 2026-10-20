@@ -375,6 +375,8 @@ final class Controller: NSObject, NSMenuDelegate {
             if j < b.length && v.character(at: i) == b.character(at: j) { i += 1; j += 1 }
             else if v.character(at: i) == 10 { i += 1 }
             else if j < b.length && b.character(at: j) == 10 { j += 1 }
+            // a picture: the box counts it as one character (U+FFFC) that our text doesn't have
+            else if j < b.length && b.character(at: j) == 0xFFFC { j += 1 }
             else { return nil }
         }
         map[v.length] = b.length
@@ -1444,6 +1446,7 @@ final class Controller: NSObject, NSMenuDelegate {
             if j < b.length && c == b.character(at: j) { out += c == 10 ? [10, 10] : [c]; i += 1; j += 1 }
             else if c == 10 { out.append(10); i += 1 }
             else if j < b.length && b.character(at: j) == 10 { out.append(10); j += 1 }
+            else if j < b.length && b.character(at: j) == 0xFFFC { j += 1 }        // a picture
             else { return value as String }
         }
         return String(utf16CodeUnits: out, count: out.count)
