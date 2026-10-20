@@ -1029,7 +1029,11 @@ final class Controller: NSObject, NSMenuDelegate {
         }
         tidyInflight.insert(key)
         // only what you wrote above a forwarded or quoted email
-        let text = (pics?.text ?? chips?.text ?? Diff.flattenTags(Diff.ownPart(displayText(el)))).trimmingCharacters(in: .whitespacesAndNewlines)
+        // a real list in a web box comes through with each number or bullet on a line of its own ("1.\nDid…"):
+        // put them back on their lines, or Claude "fixes" a list that's already right
+        let text = (pics?.text ?? chips?.text ?? Diff.flattenTags(Diff.ownPart(displayText(el))))
+            .replacingOccurrences(of: #"(?m)^[ \t]*(\d+[.)]|[-•◦▪*])[ \t]*\n+"#, with: "$1 ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         let pictureCount = pics.map { $0.runs.count - 1 } ?? 0
         note("tidy check in \(appName) with \(model.rawValue): \(words) words, \(lines) lines, sent \(String(text.prefix(2000)).debugDescription)")
         let m = model
@@ -1185,6 +1189,11 @@ final class Controller: NSObject, NSMenuDelegate {
                         let changed = AX.string(el, kAXValueAttribute) != before
                         note("tidy paste didn't land as text\(changed ? "; undoing" : "")")
                         if changed { Self.key(6, .maskCommand) }            // Command-Z
+                        // nothing changed at all: the box already looks like the tidy-up, so stop offering it
+                        if !changed && t.bold.isEmpty {
+                            self.tidyDismissed.insert(self.value as String)
+                            note("tidy: the paste changed nothing; offer dropped for this text")
+                        }
                         // nothing showed because the only change was bold, which this box drops: stop offering it
                         if !changed && !t.bold.isEmpty {
                             self.noBold.insert(self.appID)
