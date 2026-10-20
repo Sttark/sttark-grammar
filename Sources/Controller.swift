@@ -1008,11 +1008,13 @@ final class Controller: NSObject, NSMenuDelegate {
             note("tidy: skipped in \(appName), a tag sits in the middle of the message")
             return
         }
-        // A paste can't put a picture back either (a Gmail draft's pasted images)
-        if hasPicture(el) {
+        // A paste can't put a picture back (a Gmail draft's pasted images): Claude gets "[picture N]" lines where
+        // they sit, and the text around them is tidied piece by piece
+        let pics = pictureSplit(el)
+        if let pics, pics.runs.isEmpty {
             tidyChecked.insert(key)
             pictureSkipped.insert(key)
-            note("tidy: skipped in \(appName), the message has a picture in it")
+            note("tidy: skipped in \(appName), couldn't find the text around its pictures")
             return
         }
         // Asana's mention chips: the same rules as Google Chat's tags
@@ -1025,7 +1027,8 @@ final class Controller: NSObject, NSMenuDelegate {
         }
         tidyInflight.insert(key)
         // only what you wrote above a forwarded or quoted email
-        let text = (chips?.text ?? Diff.flattenTags(Diff.ownPart(displayText(el)))).trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = (pics?.text ?? chips?.text ?? Diff.flattenTags(Diff.ownPart(displayText(el)))).trimmingCharacters(in: .whitespacesAndNewlines)
+        let pictureCount = pics.map { $0.runs.count - 1 } ?? 0
         note("tidy check in \(appName) with \(model.rawValue): \(words) words, \(lines) lines, sent \(String(text.prefix(2000)).debugDescription)")
         let m = model
         let plainBox = noBold.contains(appID)
@@ -1042,6 +1045,11 @@ final class Controller: NSObject, NSMenuDelegate {
                         x.bold = []
                         // (this box doesn't show its blank lines to other apps, so they don't count as a change)
                         t = Self.sameText(x.plain(blankLines: true), text) ? nil : x
+                    }
+                    // every picture has to come back once, in order, or there's no safe way to paste around them
+                    if pictureCount > 0, let x = t, x.split(pictures: pictureCount) == nil {
+                        note("tidy: Claude's copy lost or moved a picture; nothing offered")
+                        t = nil
                     }
                     if let t { self.tidyCache[key] = t }
                     self.recordUsage(CheckResult(issues: [], inputTokens: inTokens, outputTokens: outTokens), model: m)
@@ -1119,13 +1127,18 @@ final class Controller: NSObject, NSMenuDelegate {
     /// and Return is never pressed (it sends in the Claude app and Slack).
     func applyTidy() {
         guard let el = element, let t = tidy, !editing else { return }
-        // a picture added after the check: the paste would take it out
-        if hasPicture(el) {
-            pictureSkipped.insert(value as String)
-            tidyCache[value as String] = nil
-            note("tidy up refused in \(appName): the message has a picture in it")
-            updateStatus()
-            return
+        // pictures stay where they are: only the text around them is replaced
+        if let pics = pictureSplit(el) {
+            guard !pics.runs.isEmpty, let pieces = t.split(pictures: pics.runs.count - 1) else {
+                pictureSkipped.insert(value as String)
+                tidyCache[value as String] = nil
+                note("tidy up refused in \(appName): couldn't line up the text around its pictures")
+                updateStatus()
+                return
+            }
+            hideCard()
+            editing = true
+            return applyTidyAroundPictures(el, pieces, runs: pics.runs, blankLines: !paragraphsSpaced(el) && !pIsSpaced.contains(appID))
         }
         hideCard()
         editing = true
@@ -1180,6 +1193,7 @@ final class Controller: NSObject, NSMenuDelegate {
                     // without the empty lines so they don't look doubled.
                     if landed && !spaced, let gap = self.blankLineGap(el, t), gap > 1.8 {
                         note("tidy: a blank line here is \(String(format: "%.1f", gap)) lines tall; pasting again without them")
+                        self.pIsSpaced.insert(self.appID)
                         Self.key(0, .maskCommand)
                         return DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                             self.paste(t.plain(blankLines: false), html: t.html(blankLines: false)) {
@@ -1280,22 +1294,51 @@ final class Controller: NSObject, NSMenuDelegate {
         return pillsFound
     }
 
-    /// A picture in what you wrote, above any forwarded or quoted email. Emoji and the faces on mention chips are
-    /// pictures too, but small ones: only something bigger than a line of text counts.
-    func hasPicture(_ el: AXUIElement) -> Bool {
-        var seen = 0, quoted = false
-        func walk(_ e: AXUIElement) -> Bool {
+    /// The pictures in what you wrote (above any forwarded or quoted email), as the runs of text around them:
+    /// where each run sits in our text, and the message as you see it with "[picture N]" lines where the pictures
+    /// are. A box's text shows a picture only as an empty line, so they're found in the box's parts, in order.
+    /// Emoji and the faces on mention chips are pictures too, but small ones: only something bigger than a line
+    /// of text counts. Nil when there's no picture; an empty list when the runs can't be found in the text.
+    struct PictureSplit { var runs: [NSRange]; var text: String }
+
+    func pictureSplit(_ el: AXUIElement) -> PictureSplit? {
+        var seen = 0, quoted = false, pictures = 0
+        var groups: [[String]] = [[]]
+        func walk(_ e: AXUIElement) {
             seen += 1
-            guard seen < 4000, !quoted else { return false }
+            guard seen < 4000, !quoted else { return }
             let role = AX.string(e, kAXRoleAttribute) ?? ""
-            if role == "AXImage", let f = AX.frame(e), f.height >= 32 || f.width >= 48 { return true }
+            if role == "AXImage", let f = AX.frame(e), f.height >= 32 || f.width >= 48 { pictures += 1; groups.append([]); return }
             if role == "AXStaticText" {
-                if let t = AX.string(e, kAXValueAttribute), Diff.quoteStart((t + "\n") as NSString) != nil || t.contains("Forwarded message") { quoted = true }
-                return false
+                guard let t = AX.string(e, kAXValueAttribute) else { return }
+                if Diff.quoteStart((t + "\n") as NSString) != nil || t.contains("Forwarded message") { quoted = true; return }
+                let k = t.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !k.isEmpty { groups[groups.count - 1].append(k) }
+                return
             }
-            return AX.children(e).contains(where: walk)
+            AX.children(e).forEach(walk)
         }
-        return walk(el)
+        walk(el)
+        guard pictures > 0 else { return nil }
+        let shown = displayText(el) as NSString
+        var runs: [NSRange] = [], parts: [String] = [], from = 0, shownFrom = 0
+        func find(_ s: NSString, _ t: String, _ start: Int) -> NSRange {
+            s.range(of: t, options: [], range: NSRange(location: start, length: max(0, s.length - start)))
+        }
+        for g in groups {
+            guard let a = g.first, let z = g.last else { runs.append(NSRange(location: from, length: 0)); parts.append(""); continue }
+            let s0 = find(value, a, from), d0 = find(shown, a, shownFrom)
+            guard s0.location != NSNotFound, d0.location != NSNotFound else { return PictureSplit(runs: [], text: "") }
+            let s1 = find(value, z, s0.location), d1 = find(shown, z, d0.location)
+            guard s1.location != NSNotFound, d1.location != NSNotFound else { return PictureSplit(runs: [], text: "") }
+            runs.append(NSRange(location: s0.location, length: s1.upperBound - s0.location))
+            parts.append(shown.substring(with: NSRange(location: d0.location, length: d1.upperBound - d0.location)))
+            from = s1.upperBound
+            shownFrom = d1.upperBound
+        }
+        var text = parts[0]
+        for (i, p) in parts.dropFirst().enumerated() { text += (text.isEmpty ? "" : "\n\n") + "[picture \(i + 1)]" + (p.isEmpty ? "" : "\n\n" + p) }
+        return PictureSplit(runs: runs, text: text)
     }
 
     /// Every chip comes before anything you wrote, with only spaces and line breaks around them.
@@ -1304,6 +1347,58 @@ final class Controller: NSObject, NSMenuDelegate {
         let head = NSMutableString(string: value.substring(to: last.upperBound))
         for r in p.ranges.reversed() { head.replaceCharacters(in: r, with: "") }
         return (head as String).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Apps whose pasted paragraphs already have space between them (Gmail): no empty lines in the paste.
+    var pIsSpaced: Set<String> = []
+
+    /// Tidy up around pictures: each tidied piece goes over its run of text, the last one first so the places of
+    /// the ones above don't move. The pictures are never selected. If a run can't be selected exactly, it stops
+    /// there; what's already pasted stays, and Command-Z takes it back.
+    func applyTidyAroundPictures(_ el: AXUIElement, _ pieces: [Tidy], runs: [NSRange], blankLines: Bool) {
+        func finish(_ ok: Bool, _ why: String) {
+            refresh(el)
+            lastChange = Date()
+            lastOwnEdit = Date()
+            editing = false
+            note(ok ? "tidy up done around \(runs.count - 1) picture\(runs.count == 2 ? "" : "s")" : "tidy up stopped: \(why)")
+            updateStatus()
+        }
+        // a run that's empty (a picture at the very start) can't take new text
+        if let i = runs.indices.first(where: { runs[$0].length == 0 && !pieces[$0].lines.isEmpty }) {
+            return finish(false, "there's text to put where piece \(i + 1) has none")
+        }
+        let order = runs.indices.filter { runs[$0].length > 0 }.reversed().map { $0 }
+        note("tidy up in \(appName) around \(runs.count - 1) pictures: \(order.count) pieces, blank lines \(blankLines ? "added" : "left to the box")")
+        var blank = blankLines
+        func step(_ k: Int) {
+            guard k < order.count else { return finish(true, "") }
+            let i = order[k], range = runs[i], piece = pieces[i]
+            guard range.upperBound <= value.length, !piece.lines.isEmpty else { return finish(false, "piece \(i + 1) is empty") }
+            let old = value.substring(with: range)
+            select(el, range, expect: old) { ok in
+                guard ok else { return finish(false, "couldn't select piece \(i + 1)") }
+                let before = AX.string(el, kAXValueAttribute)
+                let want = piece.lines[0].text.split(separator: " ").prefix(4).joined(separator: " ").lowercased()
+                self.paste(piece.plain(blankLines: blank), html: piece.html(blankLines: blank)) {
+                    Self.wait(until: { let v = AX.string(el, kAXValueAttribute) ?? ""; return v != before && v.lowercased().contains(want) }, tries: 100) { landed in
+                        guard landed else { return finish(false, "piece \(i + 1) didn't show") }
+                        self.refresh(el)
+                        // the first piece shows whether this box spaces its own paragraphs: if an empty line now
+                        // takes more than two lines, undo it and paste the rest without empty lines
+                        if blank, let gap = self.blankLineGap(el, piece), gap > 1.8 {
+                            note("tidy: a blank line here is \(String(format: "%.1f", gap)) lines tall; pasting again without them")
+                            self.pIsSpaced.insert(self.appID)
+                            blank = false
+                            Self.key(6, .maskCommand)                   // Command-Z
+                            return DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self.refresh(el); step(k) }
+                        }
+                        step(k + 1)
+                    }
+                }
+            }
+        }
+        step(0)
     }
 
     /// Tidy up for an email with a forwarded or quoted email below: the tidied text goes over what you wrote above
