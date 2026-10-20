@@ -1211,7 +1211,8 @@ final class Controller: NSObject, NSMenuDelegate {
             // the space between the last tag and the words stays (a no-break space, so a rich box keeps it)
             let lead = !keepSpace && old.first.map { $0 == " " || $0 == "\u{00A0}" } == true ? "\u{00A0}" : ""
             // plain text only: a formatted paste can start a new paragraph and push the words below the tag
-            self.paste(lead + tail.plain(blankLines: !spaced)) {
+            // Asana keeps a formatted paste on the line after its mentions, and needs it for blank lines and bullets
+            self.paste(lead + tail.plain(blankLines: !spaced), html: keepSpace ? tail.html(blankLines: !spaced) : nil) {
                 Self.wait(until: { let v = AX.string(el, kAXValueAttribute) ?? ""; return v != before && Diff.flattenTags(v).lowercased().contains(want) }, tries: 100) { landed in
                     if !landed { note("tidy paste after tags didn't show") }
                     finish(landed)
