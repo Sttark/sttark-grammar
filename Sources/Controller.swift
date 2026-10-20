@@ -1120,8 +1120,11 @@ final class Controller: NSObject, NSMenuDelegate {
 
     /// The first line of the tidied text is in the box now.
     func lineStartLive(_ el: AXUIElement, _ first: String) -> Bool {
-        let want = first.split(separator: " ").prefix(4).joined(separator: " ").lowercased()
-        return (AX.string(el, kAXValueAttribute) ?? "").lowercased().hasPrefix(want)
+        // a box can show a list item's number or bullet in its text ("1. Yes.", "• Yes."): read past it
+        let marker = #"^\s*(?:[-*•◦▪]|\d+[.)])?\s*"#
+        let strip = { (s: String) in s.replacingOccurrences(of: marker, with: "", options: .regularExpression).lowercased() }
+        let want = strip(first.split(separator: " ").prefix(4).joined(separator: " "))
+        return strip(AX.string(el, kAXValueAttribute) ?? "").hasPrefix(want)
     }
 
     /// Tidy up replaces the whole message in one paste: Command-A, then a paste that carries a formatted copy
