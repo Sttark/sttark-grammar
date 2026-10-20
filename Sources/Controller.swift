@@ -1377,8 +1377,13 @@ final class Controller: NSObject, NSMenuDelegate {
             guard k < order.count else { return finish(true, "") }
             let i = order[k], range = runs[i], piece = pieces[i]
             guard range.upperBound <= value.length, !piece.lines.isEmpty else { return finish(false, "piece \(i + 1) is empty") }
-            let old = value.substring(with: range)
-            select(el, range, expect: old) { ok in
+            // A selection that starts right after a picture takes the picture too (the two share a position), and
+            // the paste would delete it. So text after a picture is selected from its second letter, and the one
+            // letter left in front is deleted after the paste.
+            let afterPicture = i > 0 && range.length > 1
+            let sel = afterPicture ? NSRange(location: range.location + 1, length: range.length - 1) : range
+            let old = value.substring(with: sel)
+            select(el, sel, expect: old) { ok in
                 guard ok else { return finish(false, "couldn't select piece \(i + 1)") }
                 let before = AX.string(el, kAXValueAttribute)
                 let want = piece.lines[0].text.split(separator: " ").prefix(4).joined(separator: " ").lowercased()
@@ -1394,6 +1399,15 @@ final class Controller: NSObject, NSMenuDelegate {
                             blank = false
                             Self.key(6, .maskCommand)                   // Command-Z
                             return DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self.refresh(el); step(k) }
+                        }
+                        if afterPicture {
+                            // the caret goes right after the letter left in front (between two letters, so it can't
+                            // land on the picture), and Delete takes it out
+                            self.select(el, NSRange(location: range.location + 1, length: 0))
+                            return DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                Self.key(51, [])                            // Delete
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { self.refresh(el); step(k + 1) }
+                            }
                         }
                         step(k + 1)
                     }
