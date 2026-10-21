@@ -1,0 +1,30 @@
+import AppKit
+let app = NSApplication.shared
+app.setActivationPolicy(.accessory)
+let rewriter = PromptRewriter()
+var calls = 0
+rewriter.showNotice("Prompt rewritten", undo: { calls += 1 })
+assert(rewriter.presentation == "notice" && rewriter.visible)
+assert(rewriter.panel.frame.height < 80, "Success must use a compact notice, not the result window")
+rewriter.performUndo()
+rewriter.performUndo()
+assert(calls == 1, "Undo must be single-use")
+rewriter.showNotice("Prompt rewritten", undo: { calls += 1 })
+RunLoop.main.run(until: Date().addingTimeInterval(10.2))
+assert(!rewriter.visible && rewriter.presentation == "hidden", "Notice must disappear after ten seconds")
+rewriter.performUndo()
+assert(calls == 1, "Expired Undo must not change text")
+print("PASS compact success, 10-second expiry, single-use Undo, expired Undo")
+rewriter.showNotice("Old notice", undo: nil)
+rewriter.close()
+rewriter.show(message: "Your AI prompt", result: "Read-only fallback")
+assert(rewriter.presentation == "result" && rewriter.visible)
+rewriter.close()
+for (before, after) in [("prefix old suffix", "prefix new prompt suffix"), ("👨‍👩‍👧‍👦 old café", "👨‍👩‍👧‍👦 new 🐶 café"), ("old", "a prompt"), ("ab", "a"), ("a", "ab")] {
+    let edit = PromptRewriter.UndoEdit(before: before, after: after)
+    let restored = (after as NSString).replacingCharacters(in: edit.range, with: edit.original)
+    assert(restored == before)
+    assert(edit.canUndo(current: after))
+    assert(!edit.canUndo(current: after + " later typing"))
+}
+print("PASS read-only fallback, exact Undo spans, emoji/UTF-16, later-edit protection")

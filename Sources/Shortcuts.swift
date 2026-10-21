@@ -3,7 +3,7 @@ import AppKit
 /// Keyboard shortcuts people can change from the menu bar (Shortcuts submenu).
 enum Action: String, CaseIterable {
     // fixAll keeps its old saved name, so a shortcut someone set for "Fix this paragraph" carries over
-    case readAloud, fixAll = "fixParagraph", tidyUp, translate
+    case readAloud, fixAll = "fixParagraph", tidyUp, translate, rewritePrompt, clarifyMessage
 
     var label: String {
         switch self {
@@ -11,6 +11,8 @@ enum Action: String, CaseIterable {
         case .fixAll: return "Fix all"
         case .tidyUp: return "Tidy up"
         case .translate: return "Translate selection to Chinese"
+        case .rewritePrompt: return "Rewrite selection as AI prompt"
+        case .clarifyMessage: return "Rewrite selection for people"
         }
     }
 
@@ -20,6 +22,8 @@ enum Action: String, CaseIterable {
         case .fixAll: return Shortcut(code: 18, mods: CGEventFlags.maskCommand.rawValue, key: "1")
         case .tidyUp: return Shortcut(code: 19, mods: CGEventFlags.maskCommand.rawValue, key: "2")
         case .translate: return nil
+        case .rewritePrompt: return Shortcut(code: 21, mods: CGEventFlags.maskCommand.rawValue, key: "4")
+        case .clarifyMessage: return Shortcut(code: 20, mods: CGEventFlags.maskCommand.rawValue, key: "3")
         }
     }
 
