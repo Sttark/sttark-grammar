@@ -212,6 +212,16 @@ enum AX {
     static func enableAppAccessibility(_ pid: pid_t) {
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        // A site installed as an app from Chrome (Google Chat) answers only for its window frame: its page is
+        // shown by Chrome itself, which shares the page's parts, text box included, only once Chrome is asked
+        // too. Before a restart something else on the Mac had usually asked already.
+        guard let web = NSRunningApplication(processIdentifier: pid), isBrowserWebApp(web) else { return }
+        AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+        let id = web.bundleIdentifier ?? ""
+        let browser = ["com.google.Chrome", "com.microsoft.edgemac", "com.brave.Browser"].first { id.hasPrefix($0 + ".app.") }
+        for b in NSRunningApplication.runningApplications(withBundleIdentifier: browser ?? "") {
+            AXUIElementSetAttributeValue(AXUIElementCreateApplication(b.processIdentifier), "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+        }
     }
 
     /// AX rects use a top-left origin on the main screen; AppKit uses bottom-left.
