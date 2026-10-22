@@ -217,10 +217,6 @@ final class PromptRewriter {
             show(message: purpose.resultTitle, result: result)
             return
         }
-        if purpose == .prompt && !selection.editable {
-            show(message: purpose.resultTitle, result: result)
-            return
-        }
         if selection.editable && selection.stillSelected {
             pasteVerifiedSelection(selection, result: result, token: token)
             return
@@ -375,25 +371,21 @@ final class PromptRewriter {
     }
 
     func show(message: String, result: String? = nil, working: Bool = false) {
-        if !working && purpose == .communication {
+        if !working {
             if let result {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(result, forType: .string)
-                showNotice("Couldn't replace selection — clarified text copied", undo: nil)
+                showNotice("Couldn't replace selection — rewrite copied; paste with ⌘V", undo: nil)
             } else {
                 showNotice(message, undo: nil)
             }
             return
         }
-        presentation = working ? "working" : "result"
+        presentation = "working"
         noticeID = UUID()
         undoAction = nil
         noticeDeadline = nil
-        if working {
-            place(ClickThroughHostingView(rootView: PromptWorking(message: purpose.working, close: { [weak self] in self?.close() })))
-        } else {
-            place(ClickThroughHostingView(rootView: PromptCard(message: message, result: result, working: false, close: { [weak self] in self?.close() })))
-        }
+        place(ClickThroughHostingView(rootView: PromptWorking(message: purpose.working, close: { [weak self] in self?.close() })))
     }
 
     private func place<V: View>(_ host: ClickThroughHostingView<V>) {
@@ -416,44 +408,6 @@ final class PromptRewriter {
         presentation = "hidden"
         if let inputMonitor { NSEvent.removeMonitor(inputMonitor); self.inputMonitor = nil }
         panel.orderOut(nil)
-    }
-}
-
-struct PromptCard: View {
-    let message: String
-    let result: String?
-    let working: Bool
-    let close: () -> Void
-    @State private var copied = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                if working { ProgressView().controlSize(.small) }
-                Text(message).font(.brand(13, .semibold)).fixedSize(horizontal: false, vertical: true)
-            }
-            if let result {
-                ScrollView {
-                    Text(result).font(.brand(14)).textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }.frame(height: 280)
-            }
-            HStack {
-                if let result {
-                    Button(copied ? "Copied" : "Copy") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(result, forType: .string)
-                        copied = true
-                    }
-                }
-                Spacer()
-                Button(working ? "Cancel" : "Close", action: close)
-            }
-        }
-        .padding(14).frame(width: 400)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.12), lineWidth: 0.5))
     }
 }
 

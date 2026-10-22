@@ -136,7 +136,7 @@ Select text, then use the shortcut or menu action. Change or disable either shor
 
 When the original selection is still available, the rewrite replaces it in one paste. A compact **Undo** notice lasts 10 seconds; later typing or clicks elsewhere dismiss it to protect subsequent edits. You can also use the host app's normal Command-Z.
 
-If replacement cannot be completed, the human rewrite copies the result and shows a compact notice. The AI prompt rewrite shows a result card with **Copy**. Starting either action cancels the other; Escape or Cancel cancels pending work. Selections over 20,000 characters are rejected rather than truncated.
+Both commands edit directly, including in editors that only expose selection through Copy. Neither opens a full result window. If the selection has changed, you switched apps, or replacement cannot be completed, the rewrite is copied and a compact notice offers Command-V; the app does not overwrite unrelated text. Starting either action cancels the other; Escape or Cancel cancels pending work. Selections over 20,000 characters are rejected rather than truncated.
 
 ## Uninstall
 

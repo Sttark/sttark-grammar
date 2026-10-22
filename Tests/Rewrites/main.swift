@@ -64,7 +64,8 @@ rewriter.run("write an email about our website delay", selection: nil, model: .h
 let timeout = Date().addingTimeInterval(5)
 while !usageRecorded && Date() < timeout { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
 assert(usageRecorded && rewriter.visible)
-print("PASS Anthropic request, structured response, usage, noneditable result card")
+assert(rewriter.presentation == "notice", "AI rewrites must not open a full result window")
+print("PASS Anthropic request, structured response, usage, compact fallback")
 rewriter.close()
 assert(!rewriter.visible)
 MockAnthropic.responseText = ""
@@ -107,7 +108,9 @@ communication.close()
 assert(Action.rewritePrompt.defaultShortcut?.display == "⌘4")
 print("PASS Command-3, human message request/response routing, usage, Command-4 preserved")
 
-let clipboardEditor = PromptRewriter(purpose: .communication)
+for purpose in [PromptRewriter.Purpose.communication, .prompt] {
+MockAnthropic.purpose = purpose
+let clipboardEditor = PromptRewriter(purpose: purpose)
 let originalText = "rough draft for a colleague"
 let targetPID: pid_t = 77777
 let selection = PromptRewriter.Selection(element: nil, text: originalText, range: nil, value: nil, processID: targetPID)
@@ -155,3 +158,5 @@ assert((clipboardEditor.panel.contentView as? ClickThroughHostingView<PromptNoti
 assert(NSPasteboard.general.string(forType: .string) == MockAnthropic.responseText)
 clipboardEditor.close()
 print("PASS read-only selection copies result with compact notice and no misleading Undo")
+
+}

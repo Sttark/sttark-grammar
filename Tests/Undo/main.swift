@@ -18,7 +18,7 @@ print("PASS compact success, 10-second expiry, single-use Undo, expired Undo")
 rewriter.showNotice("Old notice", undo: nil)
 rewriter.close()
 rewriter.show(message: "Your AI prompt", result: "Read-only fallback")
-assert(rewriter.presentation == "result" && rewriter.visible)
+assert(rewriter.presentation == "notice" && rewriter.visible)
 rewriter.close()
 for (before, after) in [("prefix old suffix", "prefix new prompt suffix"), ("👨‍👩‍👧‍👦 old café", "👨‍👩‍👧‍👦 new 🐶 café"), ("old", "a prompt"), ("ab", "a"), ("a", "ab")] {
     let edit = PromptRewriter.UndoEdit(before: before, after: after)
