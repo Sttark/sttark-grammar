@@ -123,6 +123,21 @@ The text goes to Anthropic and nowhere else, except text you have read aloud, wh
 - **A shortcut won't record.** macOS keeps some keys for itself before any app sees them, like Command-Esc (see Shortcuts). Pick another.
 - **Red dotted underlines that aren't from Sttark Grammar.** Chrome and the Claude app have their own spell checkers. Chrome's is under Settings > Languages > Spell check.
 
+## Rewrite selected text
+
+Both actions rewrite your selection using your existing Anthropic key and the model selected in the menu. They preserve supplied facts and intent rather than answering or carrying out the selected text's instructions. Usage counts toward today's total.
+
+| Default shortcut | Menu action | Purpose |
+| --- | --- | --- |
+| **Command-3** | **Rewrite selection for people** | Improve wording, grammar, flow, and presentation for human readers. Preserve tone, uncertainty, and commitments without adding promises or requirements. |
+| **Command-4** | **Rewrite selection as AI prompt** | Turn the draft into clear AI instructions. Make the outcome explicit and organize supplied context and constraints without inventing facts or requirements. |
+
+Select text, then use the shortcut or menu action. Change or disable either shortcut under **Shortcuts**. These shortcuts take precedence over the current app's shortcuts while Sttark Grammar is running.
+
+When the original selection is still available, the rewrite replaces it in one paste. A compact **Undo** notice lasts 10 seconds; later typing or clicks elsewhere dismiss it to protect subsequent edits. You can also use the host app's normal Command-Z.
+
+Both commands edit directly, including in editors that only expose selection through Copy. Neither opens a full result window. If the selection has changed, you switched apps, or replacement cannot be completed, the rewrite is copied and a compact notice offers Command-V; the app does not overwrite unrelated text. Starting either action cancels the other; Escape or Cancel cancels pending work. Selections over 20,000 characters are rejected rather than truncated.
+
 ## Uninstall
 
 Quit it from the menu and drag it from Applications to the Trash. To also remove your keys, settings and dictionary, run `uninstall.sh` from this repo:
@@ -151,6 +166,10 @@ git clone https://github.com/Sttark/sttark-grammar.git ~/sttark-grammar
 ```
 
 This builds the app into `~/Applications` and opens it. Without the Sttark signing certificate the build is signed ad hoc, so Accessibility has to be turned on again after each build.
+
+### Offline regression checks
+
+Run `./Tests/run.sh` with Apple's command line tools installed. The checks use mocked Anthropic responses and cover both rewrite actions, shortcut settings, cancellation, clipboard-only selection handling, and Undo protection. They make no live API calls.
 
 ### Releases
 
