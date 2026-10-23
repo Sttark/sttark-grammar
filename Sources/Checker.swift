@@ -693,6 +693,10 @@ enum Diff {
         while edgeRight() && hi < v.length && v.character(at: hi) != 10 { mid.append(v.character(at: hi)); hi += 1; if !space(mid.last!) { break } }
         // at a line start, the left can't be widened: take from the right
         while edgeLeft() && hi < v.length && v.character(at: hi) != 10 { mid.append(v.character(at: hi)); hi += 1; if !space(mid.last!) { break } }
+        // never part of a word: Messages and other Mac text boxes add a space when a paste starts or ends right
+        // against letters ("s," over the "s" of "always" came out "alway s,"). Take the whole word.
+        while lo > 0, let f = mid.first, isWordChar(f), isWordChar(v.character(at: lo - 1)) { lo -= 1; mid.insert(v.character(at: lo), at: 0) }
+        while hi < v.length, let l = mid.last, isWordChar(l), isWordChar(v.character(at: hi)) { mid.append(v.character(at: hi)); hi += 1 }
         return (NSRange(location: lo, length: hi - lo), String(utf16CodeUnits: mid, count: mid.count))
     }
 
