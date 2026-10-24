@@ -103,6 +103,8 @@ final class Controller: NSObject, NSMenuDelegate {
     var badgeState = ""
     var loggedMissing: Set<UUID> = []
     let translator = Translator()
+    let promptRewriter = PromptRewriter()
+    let communicationRewriter = PromptRewriter(purpose: .communication)
     let speaker = Speaker()
     var recordingShortcut = false               // the Shortcuts box is open: let keys through to it
 
@@ -135,6 +137,11 @@ final class Controller: NSObject, NSMenuDelegate {
     var clickMonitor: Any?
 
     func start() {
+        for rewriter in [promptRewriter, communicationRewriter] {
+            rewriter.used = { [weak self] input, output, model in
+                self?.recordUsage(CheckResult(issues: [], inputTokens: input, outputTokens: output), model: model)
+            }
+        }
         // a click in another app (anywhere but the dot and its card) closes the dot's card
         clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             guard let self, self.dotCardOpen else { return }
@@ -1753,6 +1760,16 @@ final class Controller: NSObject, NSMenuDelegate {
             DispatchQueue.main.async { self.readAloud(anchor: NSEvent.mouseLocation) }
             return true
         }
+        if Action.rewritePrompt.shortcut?.matches(e) == true {
+            DispatchQueue.main.async { self.rewriteSelection(forPeople: false, anchor: NSEvent.mouseLocation) }
+            return true
+        }
+        if Action.clarifyMessage.shortcut?.matches(e) == true {
+            DispatchQueue.main.async { self.rewriteSelection(forPeople: true, anchor: NSEvent.mouseLocation) }
+            return true
+        }
+        if code == 53 && f.isEmpty && communicationRewriter.visible { DispatchQueue.main.async { self.communicationRewriter.close() }; return true }
+        if code == 53 && f.isEmpty && promptRewriter.visible { DispatchQueue.main.async { self.promptRewriter.close() }; return true }
         if Action.translate.shortcut?.matches(e) == true {
             DispatchQueue.main.async { self.translator.translateSelection(anchor: NSEvent.mouseLocation) }
             return true
@@ -1870,6 +1887,8 @@ final class Controller: NSObject, NSMenuDelegate {
         speeds.submenu = speedMenu
         menu.addItem(speeds)
         shortcutItem("Translate selection to Chinese", #selector(translateMenu), .translate)
+        shortcutItem("Rewrite selection as AI prompt", #selector(rewritePromptMenu), .rewritePrompt)
+        shortcutItem("Rewrite selection for people", #selector(clarifyMessageMenu), .clarifyMessage)
         shortcutItem("Fix all", #selector(fixAllMenu), .fixAll)
         shortcutItem("Tidy up", #selector(tidyUpMenu), .tidyUp)
         let keys = NSMenuItem(title: "Shortcuts", action: nil, keyEquivalent: "")
@@ -1921,6 +1940,19 @@ final class Controller: NSObject, NSMenuDelegate {
     @objc func resume() { pausedUntil = nil; updateStatus() }
     @objc func fixAllMenu() { fixAll() }
     @objc func tidyUpMenu() { applyTidy() }
+    func rewriteSelection(forPeople: Bool, anchor: CGPoint) {
+        let rewriter = forPeople ? communicationRewriter : promptRewriter
+        (forPeople ? promptRewriter : communicationRewriter).close()
+        rewriter.rewriteSelection(anchor: anchor, model: model)
+    }
+    @objc func rewritePromptMenu() {
+        let anchor = menuAnchor
+        DispatchQueue.main.async { self.rewriteSelection(forPeople: false, anchor: anchor) }
+    }
+    @objc func clarifyMessageMenu() {
+        let anchor = menuAnchor
+        DispatchQueue.main.async { self.rewriteSelection(forPeople: true, anchor: anchor) }
+    }
     @objc func translateMenu() {
         // the card goes under the menu bar icon; the menu has closed, so the app you were in has focus again
         let anchor = menuAnchor
