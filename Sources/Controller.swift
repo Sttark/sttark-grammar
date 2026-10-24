@@ -1693,6 +1693,15 @@ final class Controller: NSObject, NSMenuDelegate {
         }
     }
 
+    /// The clipboard's plain version, when its formatted version holds two or more paragraphs and the plain one
+    /// has blank lines between them.
+    static func plainOfParagraphs() -> String? {
+        let pb = NSPasteboard.general
+        guard let html = pb.string(forType: .html), let plain = pb.string(forType: .string), plain.contains("\n\n") else { return nil }
+        let paragraphs = html.components(separatedBy: "<p").count - 1
+        return paragraphs >= 2 ? plain : nil
+    }
+
     // MARK: keys: Tab takes the fix, Esc ignores it (only while a card is open), plus the shortcuts in the Shortcuts menu
 
     func installKeyTap() {
@@ -1718,6 +1727,18 @@ final class Controller: NSObject, NSMenuDelegate {
         let code = e.getIntegerValueField(.keyboardEventKeycode)
         let f = e.flags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift])
         if recordingShortcut { return false }
+        // Messages pastes a copy's formatted version and shows each paragraph as one line, so a copy from the
+        // Claude app loses its blank lines. When the copy has paragraphs, paste its plain version instead, which
+        // keeps them. (Our own paste comes back through here with only the plain version, so it passes.)
+        if code == 9 && f == .maskCommand && running,
+           NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.MobileSMS",
+           let plain = Self.plainOfParagraphs() {
+            DispatchQueue.main.async {
+                note("paste in Messages: plain copy, so the blank lines between paragraphs stay")
+                self.paste(plain) {}
+            }
+            return true
+        }
         // taken every time in a watched box, even with nothing to tidy, so a key like Option-` doesn't fall
         // through and start an accent on the next letter
         if Action.tidyUp.shortcut?.matches(e) == true && running && element != nil {
