@@ -233,6 +233,30 @@ struct Tidy {
         return out
     }
 
+    /// The spell check's fixes that the tidied text still lacks, put in: Claude's tidy-up doesn't always repeat
+    /// them (it left "draft a google chat" alone while the spell check had Draft, Google and Chat). A fix goes in
+    /// where its word sits the same number of times, whole and with the same capitals, in the message and the
+    /// tidied text: the n-th one in the message is the n-th one there.
+    func including(_ fixes: [Issue], from source: NSString) -> Tidy {
+        var text = lines.map(\.text).joined(separator: "\n") as NSString
+        var changed = false
+        for f in fixes.sorted(by: { $0.range.location > $1.range.location }) where f.hasFix && !f.original.contains("\n") {
+            let word = NSRegularExpression.escapedPattern(for: f.original)
+            guard let re = try? NSRegularExpression(pattern: "(?<![\\p{L}\\p{N}'’])" + word + "(?![\\p{L}\\p{N}'’])") else { continue }
+            let inSource = re.matches(in: source as String, range: NSRange(location: 0, length: source.length)).map(\.range)
+            let inTidy = re.matches(in: text as String, range: NSRange(location: 0, length: text.length)).map(\.range)
+            guard !inSource.isEmpty, inSource.count == inTidy.count, let n = inSource.firstIndex(where: { $0.location == f.range.location }) else { continue }
+            text = text.replacingCharacters(in: inTidy[n], with: f.suggestion) as NSString
+            changed = true
+        }
+        guard changed else { return self }
+        let fixed = (text as String).components(separatedBy: "\n")
+        guard fixed.count == lines.count else { return self }
+        var t = self
+        for i in t.lines.indices { t.lines[i].text = fixed[i] }
+        return t
+    }
+
     /// For the card: markers shown as they'll look, numbered within each list.
     var preview: String {
         var n = 0

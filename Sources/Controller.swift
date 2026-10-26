@@ -70,7 +70,17 @@ final class Controller: NSObject, NSMenuDelegate {
     var dotCardOpen = false
     var dotPinned = false                      // opened by a click: stays until a click elsewhere or Esc
     /// The tidy-up for the message as it is right now.
-    var tidy: Tidy? { tidyOn && !tidyDismissed.contains(value as String) ? tidyCache[value as String] : nil }
+    var tidy: Tidy? {
+        guard tidyOn, !tidyDismissed.contains(value as String), let t = tidyCache[value as String] else { return nil }
+        // with every fix the spell check found in it, so Tidy up never leaves one behind (worked out once per
+        // message and set of fixes: the dot asks many times a second)
+        let key = "\(value.hash) \(value.length) " + issues.map { "\($0.range.location):\($0.suggestion)" }.joined(separator: ",")
+        if let c = tidyWithFixes, c.key == key { return c.tidy }
+        let full = t.including(issues, from: value)
+        tidyWithFixes = (key, full)
+        return full
+    }
+    var tidyWithFixes: (key: String, tidy: Tidy)?
     /// Apps whose text box quietly undid a fix made through Accessibility; fixes there are pasted instead.
     var pasteOnly: Set<String> = []
     var appID: String { NSRunningApplication(processIdentifier: element.map(AX.pid) ?? 0)?.bundleIdentifier ?? appName }
