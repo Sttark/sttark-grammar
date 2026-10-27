@@ -76,7 +76,7 @@ final class Controller: NSObject, NSMenuDelegate {
         // message and set of fixes: the dot asks many times a second)
         let key = "\(value.hash) \(value.length) " + issues.map { "\($0.range.location):\($0.suggestion)" }.joined(separator: ",")
         if let c = tidyWithFixes, c.key == key { return c.tidy }
-        let full = t.including(issues, from: value)
+        let full = t.including(issues, from: value).keepingAddresses(from: value as String)
         tidyWithFixes = (key, full)
         return full
     }

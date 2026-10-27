@@ -257,6 +257,29 @@ struct Tidy {
         return t
     }
 
+    /// Web and email addresses and paths exactly as you typed them: Claude's tidy-up sometimes capitalizes a
+    /// dictionary name inside one ("docs.sttark.com" -> "docs.Sttark.com"), which breaks the link.
+    func keepingAddresses(from source: String) -> Tidy {
+        let src = source as NSString
+        let addresses = Set(Diff.links(in: source).map { src.substring(with: $0) }.filter { !$0.hasPrefix("@") })
+        guard !addresses.isEmpty else { return self }
+        var t = self
+        for i in t.lines.indices {
+            let line = NSMutableString(string: t.lines[i].text)
+            for a in addresses {
+                var at = 0
+                while at < line.length {
+                    let r = line.range(of: a, options: .caseInsensitive, range: NSRange(location: at, length: line.length - at))
+                    guard r.location != NSNotFound else { break }
+                    line.replaceCharacters(in: r, with: a)
+                    at = r.location + (a as NSString).length
+                }
+            }
+            t.lines[i].text = line as String
+        }
+        return t
+    }
+
     /// For the card: markers shown as they'll look, numbered within each list.
     var preview: String {
         var n = 0
