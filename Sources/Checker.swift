@@ -395,7 +395,7 @@ enum CheckError: Error, CustomStringConvertible {
 enum Checker {
     static let system = """
     You proofread text the user is typing in another app.
-    First write "corrected": the full text with only clear mistakes fixed, in American spelling (judgment, color, organize). Fix misspellings, wrong grammar, wrong word forms, every "a" or "an" that doesn't match the sound of the next word ("an little" -> "a little", "a hour" -> "an hour"), doubled words ("the the"), missing hyphens, and words that need a capital letter (names, brands, products, short forms like HVAC, PDF and USB, the word I, sentence starts). Keep the user's words, tone and casual style. Leave web addresses, email addresses, file paths and code exactly as typed. Sttark is the user's company and is spelled right, as are its addresses like sttark.com. Do not reword, shorten, or improve style. Treat the text as finished: if the last sentence has no period, question mark or exclamation point at the end, add one, unless the text is a list item (it starts with a marker like "1.", "-" or "•"). Only leave it off when the text clearly stops partway, like ending on "the", "to" or "and". Keep punctuation that is already correct. Keep all spacing and line breaks.
+    First write "corrected": the full text with only clear mistakes fixed, in American spelling (judgment, color, organize). Fix misspellings, wrong grammar, wrong word forms, every "a" or "an" that doesn't match the sound of the next word ("an little" -> "a little", "a hour" -> "an hour"), doubled words ("the the"), missing hyphens, and words that need a capital letter (names, brands, products, short forms like HVAC, PDF and USB, the word I, sentence starts). Keep the user's words, tone and casual style. Leave web addresses, email addresses, file paths and code exactly as typed. Sttark is the user's company and is spelled right, as are its addresses like sttark.com. Do not reword, shorten, or improve style. Treat the text as finished: if the last sentence has no period, question mark or exclamation point at the end, add one, unless the text is a list item (it starts with a marker like "1.", "-" or "•"). Only leave it off when the text clearly stops partway, like ending on "the", "to" or "and". Keep punctuation that is already correct. Keep all spacing and line breaks. When a word or phrase needs quote marks, add both marks.
     Then list every change you made in "issues", in the order they appear. For each: "original" is the exact wrong text copied character for character from the input, as short as possible (only the wrong word or words). "suggestion" is what replaces it. "kind" is spelling, grammar, or capitals. "reason" is at most 12 plain words. If the same mistake appears more than once, list each one. Every word that is not a real word or a known name must be fixed or listed, even when you're unsure. Fix it to your best guess from the sentence, preferring words from the user's dictionary. Only if you can't guess at all, like "somnerhqw", leave it as is in "corrected" and still list it, with "suggestion" the same as "original". Never list a word that is spelled right, including names of companies, products, apps and people (Asana, Onshape, Pantone); a word you would leave unchanged is not a mistake. If nothing is wrong, return the text unchanged and an empty list.
     The text may be unfinished: ignore a cut-off last word.
     """
@@ -461,7 +461,8 @@ enum Checker {
                 || (i.suggestion.contains("\n") && !i.original.contains("\n"))
                 || ["\"issues\"", "\"corrected\"", "Issues:", "{", "}"].contains { i.suggestion.contains($0) && !i.original.contains($0) }
         }
-        return CheckResult(issues: issues.sorted { $0.range.location < $1.range.location }, inputTokens: inTokens, outputTokens: outTokens)
+        issues = Diff.pairQuotes(issues.sorted { $0.range.location < $1.range.location }, in: text as NSString)
+        return CheckResult(issues: issues, inputTokens: inTokens, outputTokens: outTokens)
     }
 
     /// One request to Claude with a JSON reply. Returns the reply and the tokens used.
@@ -578,6 +579,46 @@ enum Diff {
         let head = NSMutableString(string: s.substring(to: last.0.upperBound))
         for (r, _) in tags(in: head).reversed() { head.replaceCharacters(in: r, with: "") }
         return (head as String).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Quote marks put around words come back as two fixes, one per mark, so they went in one at a time and the
+    /// text sat with a quote left open. A fix that only adds a quote mark joins the next one that does (on the
+    /// same line), as one fix over the words between. One with no partner stays only if it closes a quote the
+    /// text already opened.
+    static func pairQuotes(_ list: [Issue], in text: NSString) -> [Issue] {
+        let marks: Set<Character> = ["\"", "“", "”"]
+        func addsQuote(_ i: Issue) -> Bool {
+            let o = Array(i.original), s = Array(i.suggestion)
+            guard s.count == o.count + 1 else { return false }
+            for k in s.indices where marks.contains(s[k]) { var t = s; t.remove(at: k); if t == o { return true } }
+            return false
+        }
+        var out: [Issue] = [], k = 0
+        while k < list.count {
+            let a = list[k]
+            if addsQuote(a), k + 1 < list.count, addsQuote(list[k + 1]) {
+                let b = list[k + 1]
+                let gap = NSRange(location: a.range.upperBound, length: b.range.location - a.range.upperBound)
+                if gap.length >= 0, gap.length <= 80, !text.substring(with: gap).contains("\n") {
+                    let between = text.substring(with: gap)
+                    out.append(Issue(range: NSRange(location: a.range.location, length: b.range.upperBound - a.range.location),
+                                     original: a.original + between + b.original, suggestion: a.suggestion + between + b.suggestion,
+                                     kind: a.kind, reason: "Quote marks on both sides"))
+                    k += 2
+                    continue
+                }
+            }
+            if addsQuote(a) {
+                // alone: keep it only if the line it's on then has its quotes closed
+                let line = text.substring(with: text.lineRange(for: a.range)) as NSString
+                let at = a.range.location - text.lineRange(for: a.range).location
+                let after = line.replacingCharacters(in: NSRange(location: at, length: a.range.length), with: a.suggestion)
+                if after.filter({ $0 == "\"" }).count % 2 != 0 || after.filter({ $0 == "“" }).count != after.filter({ $0 == "”" }).count { k += 1; continue }
+            }
+            out.append(a)
+            k += 1
+        }
+        return out
     }
 
     static func plainQuotes(_ s: String) -> String {
