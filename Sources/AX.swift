@@ -134,6 +134,12 @@ enum AX {
         AXUIElementSetAttributeValue(el, kAXSelectedTextAttribute as CFString, s as CFString) == .success
     }
 
+    /// Replaces a box's whole text. Chrome takes this in a plain text box (a textarea) and fires the page's
+    /// input event, though it ignores a set of the selected text.
+    static func setValue(_ el: AXUIElement, _ s: String) -> Bool {
+        AXUIElementSetAttributeValue(el, kAXValueAttribute as CFString, s as CFString) == .success
+    }
+
     /// The text the box itself holds at a range, in its own position count.
     static func string(_ el: AXUIElement, for r: NSRange) -> String? {
         var cf = CFRange(location: r.location, length: r.length)

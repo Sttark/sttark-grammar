@@ -1141,6 +1141,16 @@ final class Controller: NSObject, NSMenuDelegate {
         return strip(AX.string(el, kAXValueAttribute) ?? "").hasPrefix(want)
     }
 
+    /// The same words in the same order and case, whatever the line breaks, blank lines or list marks: a box
+    /// that already reads like the tidy-up (Asana puts each list number on a line of its own).
+    static func sameWords(_ a: String, _ b: String) -> Bool {
+        let words = { (s: String) in
+            s.split(separator: "\n").map { $0.replacingOccurrences(of: #"^\s*(?:[-*•◦▪]|\d+[.)])?\s*"#, with: "", options: .regularExpression) }
+                .joined(separator: " ").split(whereSeparator: \.isWhitespace)
+        }
+        return words(a) == words(b)
+    }
+
     /// Tidy up replaces the whole message in one paste: Command-A, then a paste that carries a formatted copy
     /// (real lists, bold, blank lines) for rich boxes and a plain copy for plain ones. Nothing is typed after,
     /// and Return is never pressed (it sends in the Claude app and Slack).
@@ -1190,7 +1200,8 @@ final class Controller: NSObject, NSMenuDelegate {
             let before = AX.string(el, kAXValueAttribute)
             let boxNow = { AX.boxText(el, upTo: (AX.string(el, kAXValueAttribute) ?? "").utf16.count) ?? "" }
             let shownBefore = boxNow()
-            self.paste(t.plain(blankLines: !spaced), html: t.html(blankLines: !spaced)) {
+            let plain = t.plain(blankLines: !spaced)
+            self.paste(plain, html: t.html(blankLines: !spaced)) {
                 // a whole message can take a moment to show up. Chrome's text leaves blank lines out, so a change
                 // to blank lines alone shows only in the box's own text.
                 Self.wait(until: { (AX.string(el, kAXValueAttribute) != before || boxNow() != shownBefore) && self.lineStartLive(el, first) }, tries: 100) { landed in
@@ -1199,13 +1210,23 @@ final class Controller: NSObject, NSMenuDelegate {
                         let changed = AX.string(el, kAXValueAttribute) != before
                         note("tidy paste didn't land as text\(changed ? "; undoing" : "")")
                         if changed { Self.key(6, .maskCommand) }            // Command-Z
-                        // nothing changed at all: the box already looks like the tidy-up, so stop offering it
-                        if !changed && t.bold.isEmpty {
+                        // Chrome now and then takes a paste and drops it (seen in the what-to-work-on page's message
+                        // box). A plain box, one with no parts inside it like a textarea, gets the text set straight in.
+                        if !changed && !Self.sameWords(before ?? "", plain) && AX.children(el).isEmpty && AX.setValue(el, plain) {
+                            return Self.wait(until: { AX.string(el, kAXValueAttribute) == plain }, tries: 33) { took in
+                                note("tidy: Chrome dropped the paste; the text \(took ? "went in directly" : "didn't go in directly either")")
+                                finish(took)
+                            }
+                        }
+                        // nothing changed at all and the words already match: the box already looks like the
+                        // tidy-up, so stop offering it
+                        let same = Self.sameWords(before ?? "", plain)
+                        if !changed && same && t.bold.isEmpty {
                             self.tidyDismissed.insert(self.value as String)
                             note("tidy: the paste changed nothing; offer dropped for this text")
                         }
                         // nothing showed because the only change was bold, which this box drops: stop offering it
-                        if !changed && !t.bold.isEmpty {
+                        if !changed && same && !t.bold.isEmpty {
                             self.noBold.insert(self.appID)
                             self.tidyDismissed.insert(self.value as String)
                             note("tidy: \(self.appName) drops bold; tidy-ups there leave it out from now on")
