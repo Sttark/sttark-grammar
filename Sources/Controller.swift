@@ -1158,16 +1158,29 @@ final class Controller: NSObject, NSMenuDelegate {
         guard let el = element, let t = tidy, !editing else { return }
         // pictures stay where they are: only the text around them is replaced
         if let pics = pictureSplit(el) {
-            guard !pics.runs.isEmpty, let pieces = t.split(pictures: pics.runs.count - 1) else {
+            guard !pics.runs.isEmpty, var pieces = t.split(pictures: pics.runs.count - 1) else {
                 pictureSkipped.insert(value as String)
                 tidyCache[value as String] = nil
                 note("tidy up refused in \(appName): couldn't line up the text around its pictures")
                 updateStatus()
                 return
             }
+            // Asana's mention chips at the start stay too: the first piece starts after them, as with no picture.
+            // Selecting from the chip's name failed every time in Asana, so the chip is never part of the selection.
+            var runs = pics.runs
+            if let chips = pills(el), pillsAtStart(chips), let last = chips.ranges.last, let r0 = runs.first,
+               r0.location <= last.location, last.upperBound <= r0.upperBound {
+                let (tail, ownLine) = Self.withoutNames(pieces[0], chips.names)
+                var start = last.upperBound
+                while start < r0.upperBound, let c = Unicode.Scalar(value.character(at: start)),
+                      c == " " || c == "\u{00A0}" || (ownLine && CharacterSet.whitespacesAndNewlines.contains(c)) { start += 1 }
+                runs[0] = NSRange(location: start, length: r0.upperBound - start)
+                pieces[0] = tail
+                note("tidy: around pictures after \(chips.names.count) mention\(chips.names.count == 1 ? "" : "s")")
+            }
             hideCard()
             editing = true
-            return applyTidyAroundPictures(el, pieces, runs: pics.runs, blankLines: !paragraphsSpaced(el) && !pIsSpaced.contains(appID))
+            return applyTidyAroundPictures(el, pieces, runs: runs, blankLines: !paragraphsSpaced(el) && !pIsSpaced.contains(appID))
         }
         hideCard()
         editing = true
@@ -1253,6 +1266,23 @@ final class Controller: NSObject, NSMenuDelegate {
     }
 
 
+    /// The tidied text without the mention names it starts with (with or without their "@"), since the chips stay
+    /// in the box and only the text after them is pasted. ownLine: the names were the whole first line.
+    static func withoutNames(_ t: Tidy, _ names: [String]) -> (Tidy, ownLine: Bool) {
+        var tail = t
+        var head = tail.lines.first?.text ?? ""
+        for n in names {
+            head = head.trimmingCharacters(in: .whitespaces)
+            let bare = n.hasPrefix("@") ? String(n.dropFirst()) : n
+            for form in ["@" + bare, bare] where head.lowercased().hasPrefix(form.lowercased()) { head = String(head.dropFirst(form.count)); break }
+        }
+        head = head.trimmingCharacters(in: .whitespaces)
+        guard !tail.lines.isEmpty else { return (tail, false) }
+        if head.isEmpty { tail.lines.removeFirst(); if !tail.lines.isEmpty { tail.lines[0].blankBefore = false }; return (tail, true) }
+        tail.lines[0].text = head
+        return (tail, false)
+    }
+
     /// Tidy up for a message that starts with tags: the tidied text without its leading "@Name"s goes over the text
     /// after the last tag, never over the tags. If that text can't be selected exactly, nothing is pasted.
     func applyTidyAfterTags(_ el: AXUIElement, _ t: Tidy, after tagEnd: Int, names: [String], spaced: Bool, keepSpace: Bool = false) {
@@ -1261,22 +1291,8 @@ final class Controller: NSObject, NSMenuDelegate {
         if keepSpace { while start < value.length, let c = Unicode.Scalar(value.character(at: start)), c == " " || c == "\u{00A0}" { start += 1 } }
         // mentions on a line of their own (the tidied first line is only the names): they keep their line and the
         // blank line under them, and the paste starts where your words start
-        var ownLine = false
-        do {
-            var h = t.lines.first?.text ?? ""
-            for n in names { h = h.trimmingCharacters(in: .whitespaces); if h.lowercased().hasPrefix(n.lowercased()) { h = String(h.dropFirst(n.count)) } }
-            ownLine = h.trimmingCharacters(in: .whitespaces).isEmpty
-        }
+        let (tail, ownLine) = Self.withoutNames(t, names)
         if ownLine { while start < value.length, let c = Unicode.Scalar(value.character(at: start)), CharacterSet.whitespacesAndNewlines.contains(c) || c == "\u{00A0}" { start += 1 } }
-        var tail = t
-        var head = tail.lines.first?.text ?? ""
-        for n in names {
-            head = head.trimmingCharacters(in: .whitespaces)
-            if head.lowercased().hasPrefix(n.lowercased()) { head = String(head.dropFirst(n.count)) }
-        }
-        head = head.trimmingCharacters(in: .whitespaces)
-        if head.isEmpty { tail.lines.removeFirst(); if !tail.lines.isEmpty { tail.lines[0].blankBefore = false } }
-        else { tail.lines[0].text = head }
         func finish(_ ok: Bool) {
             refresh(el)
             lastChange = Date()
