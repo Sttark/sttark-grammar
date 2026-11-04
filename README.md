@@ -52,7 +52,7 @@ For a longer message, the dot turns blue when Claude has a cleaner version: para
 - The one or two things a reader must not miss are made bold, in boxes that keep bold: a deadline or a required action, or else the sentence with the main point.
 - A box that already puts space between paragraphs gets no empty lines, so they don't look doubled.
 - Pictures in the message (a Gmail draft's images) stay where they are. Claude sees where each one sits, and the text between them is tidied piece by piece, last piece first, without ever selecting a picture.
-- @mentions stay as they are. In Google Chat and Asana, mentions at the start of a message are kept and only the text after them is tidied; with a mention in the middle, Tidy up isn't offered. Fixes never go over a mention. In other rich boxes like Slack, tidying turns links and @mentions into plain text.
+- @mentions stay as they are. In Google Chat and Asana, mentions at the start of a message are kept and only the text after them is tidied, with or without pictures in the message; with a mention in the middle, Tidy up isn't offered. Fixes never go over a mention. In other rich boxes like Slack, tidying turns links and @mentions into plain text.
 - Turn it off with **Offer to tidy up** in the menu. It costs about one extra check each time you pause in a long message.
 
 ### Translate to Chinese
