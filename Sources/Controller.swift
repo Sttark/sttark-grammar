@@ -469,8 +469,11 @@ final class Controller: NSObject, NSMenuDelegate {
         let inserted = new.substring(with: NSRange(location: p, length: ln - s - p)) as NSString
         let firstWord = inserted.length > 0 && Diff.isWordChar(inserted.character(at: 0))
         let lastWord = inserted.length > 0 && Diff.isWordChar(inserted.character(at: inserted.length - 1))
+        // a fix found at the end of a line (like a period after its last word) is wrong once you type on past it
+        let typedPastEnd = inserted.length > 0 && (p == lo || old.character(at: p) == 10 || old.character(at: p) == 13)
         issues = issues.compactMap { i in
             let r = i.range
+            if r.upperBound == p && typedPastEnd { return nil }
             if r.upperBound < p || (r.upperBound == p && !firstWord) { return i }
             if r.location > endOld || (r.location == endOld && !lastWord) { var c = i; c.range.location += delta; return c }
             return nil
@@ -1154,8 +1157,42 @@ final class Controller: NSObject, NSMenuDelegate {
     /// Tidy up replaces the whole message in one paste: Command-A, then a paste that carries a formatted copy
     /// (real lists, bold, blank lines) for rich boxes and a plain copy for plain ones. Nothing is typed after,
     /// and Return is never pressed (it sends in the Claude app and Slack).
+    /// What the last Tidy up meant to put in, to compare with what the box shows after it.
+    var tidyWanted = ""
+
+    /// Logs where the box differs from the tidy-up right after it goes in, and anything that changes in the next
+    /// two seconds while you aren't typing, so a stray character (a doubled comma) can be traced to its source.
+    func watchAfterTidy(_ el: AXUIElement) {
+        let squash = { (s: String) in s.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces) }
+        let at = AX.string(el, kAXValueAttribute) ?? ""
+        let want = tidyWanted.replacingOccurrences(of: "**", with: "")
+        if !squash(at).contains(squash(want)), let d = Self.diffNote(squash(want), squash(at)) { note("tidy: box differs from the tidy-up: \(d)") }
+        for delay in [0.5, 2.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, let now = AX.string(el, kAXValueAttribute), now != at else { return }
+                let typed = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .keyDown) < delay
+                let ours = Date().timeIntervalSince(self.lastOwnEdit) < delay
+                let who = ours ? "this app" : typed ? "a key press" : "the box itself"
+                if let d = Self.diffNote(at, now) { note("tidy: \(delay)s later the box changed by \(who): \(d)") }
+            }
+        }
+    }
+
+    /// "…before[old]after…" -> "[new]": the one changed span between two texts, with a little context.
+    static func diffNote(_ a: String, _ b: String) -> String? {
+        let x = Array(a), y = Array(b)
+        var p = 0
+        while p < x.count, p < y.count, x[p] == y[p] { p += 1 }
+        var s = 0
+        while s < x.count - p, s < y.count - p, x[x.count - 1 - s] == y[y.count - 1 - s] { s += 1 }
+        if p == x.count && p == y.count { return nil }
+        let ctx = String(x[max(0, p - 20)..<p])
+        return "…\(ctx)[\(String(x[p..<(x.count - s)]))] -> [\(String(y[p..<(y.count - s)]))]".debugDescription
+    }
+
     func applyTidy() {
         guard let el = element, let t = tidy, !editing else { return }
+        tidyWanted = t.plain(blankLines: false)
         // pictures stay where they are: only the text around them is replaced
         if let pics = pictureSplit(el) {
             guard !pics.runs.isEmpty, var pieces = t.split(pictures: pics.runs.count - 1) else {
@@ -1206,6 +1243,7 @@ final class Controller: NSObject, NSMenuDelegate {
             lastOwnEdit = Date()
             editing = false
             note(ok ? "tidy up done" : "tidy up didn't go in")
+            if ok { watchAfterTidy(el) }
             updateStatus()
         }
         Self.key(0, .maskCommand)                                       // Command-A
@@ -1299,6 +1337,7 @@ final class Controller: NSObject, NSMenuDelegate {
             lastOwnEdit = Date()
             editing = false
             note(ok ? "tidy up done, tags kept" : "tidy up didn't go in")
+            if ok { watchAfterTidy(el) }
             updateStatus()
         }
         guard let first = tail.lines.first?.text, start < value.length else { return finish(false) }
@@ -1452,6 +1491,7 @@ final class Controller: NSObject, NSMenuDelegate {
             lastOwnEdit = Date()
             editing = false
             note(ok ? "tidy up done around \(runs.count - 1) picture\(runs.count == 2 ? "" : "s")" : "tidy up stopped: \(why)")
+            if ok { watchAfterTidy(el) }
             updateStatus()
         }
         // a run that's empty (a picture at the very start) can't take new text
@@ -1514,6 +1554,7 @@ final class Controller: NSObject, NSMenuDelegate {
             lastOwnEdit = Date()
             editing = false
             note(ok ? "tidy up done, quoted email kept" : "tidy up didn't go in")
+            if ok { watchAfterTidy(el) }
             updateStatus()
         }
         // up to the end of your last line: the empty lines before the quote stay
