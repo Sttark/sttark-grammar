@@ -1165,11 +1165,15 @@ final class Controller: NSObject, NSMenuDelegate {
     func watchAfterTidy(_ el: AXUIElement) {
         let squash = { (s: String) in s.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces) }
         let at = AX.string(el, kAXValueAttribute) ?? ""
-        let want = tidyWanted.replacingOccurrences(of: "**", with: "")
-        if !squash(at).contains(squash(want)), let d = Self.diffNote(squash(want), squash(at)) { note("tidy: box differs from the tidy-up: \(d)") }
+        // list marks show as the box's own bullets: compare the words, not the marks
+        let unmark = { (s: String) in s.replacingOccurrences(of: #"(?m)^\s*(?:[-*•◦▪]|\d+[.)])\s+"#, with: "", options: .regularExpression) }
+        let want = unmark(tidyWanted.replacingOccurrences(of: "**", with: ""))
+        if !squash(unmark(at)).contains(squash(want)), let d = Self.diffNote(squash(want), squash(unmark(at))) { note("tidy: box differs from the tidy-up: \(d)") }
         for delay in [0.5, 2.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                guard let self, let now = AX.string(el, kAXValueAttribute), now != at else { return }
+                // an empty box means the message was sent
+                guard let self, let now = AX.string(el, kAXValueAttribute), now != at,
+                      !now.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
                 let typed = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .keyDown) < delay
                 let ours = Date().timeIntervalSince(self.lastOwnEdit) < delay
                 let who = ours ? "this app" : typed ? "a key press" : "the box itself"
@@ -1672,7 +1676,20 @@ final class Controller: NSObject, NSMenuDelegate {
         guard let cur = AX.string(el, kAXValueAttribute) as NSString?,
               whole.range.upperBound <= cur.length, cur.substring(with: whole.range) == whole.original else { done(false); return }
         // replace only the part that changes, never starting or ending with a space
-        let (r, fix) = Diff.tighten(whole.range, whole.suggestion, in: cur)
+        var (r, fix) = Diff.tighten(whole.range, whole.suggestion, in: cur)
+        // widening to whole words can reach into an Asana mention chip ("and" became "MacDonald and"), and a paste
+        // over a chip never takes: start after the chip, dropping the same unchanged letters from the fix
+        if let chips = pills(el), let c = chips.ranges.first(where: { NSIntersectionRange($0, r).length > 0 && $0.location <= r.location }) {
+            var lo = c.upperBound
+            // and past anything the chip leaves behind it that isn't a plain letter, digit or space
+            while lo < r.upperBound, !(Unicode.Scalar(cur.character(at: lo)).map { CharacterSet.alphanumerics.contains($0) || $0 == " " } ?? false) { lo += 1 }
+            let k = lo - r.location, o = Array(cur.substring(with: r).utf16), f = Array(fix.utf16)
+            guard k > 0, k < o.count, k <= f.count, Array(o[..<k]) == Array(f[..<k]) else {
+                note("fix '\(whole.original)' -> '\(whole.suggestion)' skipped: it would go over a mention"); done(false); return
+            }
+            r = NSRange(location: lo, length: r.upperBound - lo)
+            fix = String(utf16CodeUnits: Array(f[k...]), count: f.count - k)
+        }
         let i = Issue(range: r, original: cur.substring(with: r), suggestion: fix, kind: whole.kind, reason: whole.reason)
         let expected = cur.replacingCharacters(in: i.range, with: i.suggestion)
         // never type over text that isn't the flagged word
