@@ -141,6 +141,19 @@ final class Controller: NSObject, NSMenuDelegate {
 
     var dictionaryURL: URL { supportDir.appendingPathComponent("dictionary.txt") }
     let updater = Updater()
+    var menuOpen = false
+    /// A key typed into the key dialog is being tried with Anthropic or OpenAI and isn't saved yet.
+    var checkingKey = false
+
+    /// True while restarting for an update would get in the way, so the update waits for a quiet moment:
+    /// the menu or a dialog (a key, a shortcut) is open, a key is being checked, a fix or tidy-up is going in
+    /// (the clipboard holds the fix until it's put back), the text box changed in the last minute (you're typing,
+    /// or a fix just went in), a card is open, or a translation or read aloud is running.
+    var busyForUpdate: Bool {
+        menuOpen || NSApp.modalWindow != nil || checkingKey || editing
+            || Date().timeIntervalSince(lastChange) < 60 || Date().timeIntervalSince(lastOwnEdit) < 60
+            || card.isVisible || dotCardOpen || translator.busy || translator.visible || speaker.isReading
+    }
 
     var clickMonitor: Any?
 
@@ -171,6 +184,7 @@ final class Controller: NSObject, NSMenuDelegate {
         _ = Speaker.apiKey
         installKeyTap()
         updater.changed = { [weak self] in self?.updateStatus() }
+        updater.busy = { [weak self] in self?.busyForUpdate ?? false }
         updater.start()
         // the newest Haiku and Sonnet models, now and once a day
         let refreshModels = { Task { if let k = Checker.apiKey { await Model.refresh(key: k) } } }
@@ -198,9 +212,11 @@ final class Controller: NSObject, NSMenuDelegate {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let key = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return }
+        checkingKey = true
         Task {
             let ok = await Speaker.keyWorks(key)
             await MainActor.run {
+                self.checkingKey = false
                 if ok && Speaker.saveKey(key) {
                     let a = NSAlert()
                     let s = Action.readAloud.shortcut.map { " or press \($0.display)" } ?? ""
@@ -270,9 +286,11 @@ final class Controller: NSObject, NSMenuDelegate {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let key = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return }
+        checkingKey = true
         Task {
             let ok = await Checker.keyWorks(key)
             await MainActor.run {
+                self.checkingKey = false
                 if ok && Checker.saveKey(key) {
                     self.lastError = nil
                     self.failedAt = [:]
@@ -1921,6 +1939,9 @@ final class Controller: NSObject, NSMenuDelegate {
         if b.title != t { b.title = t; b.imagePosition = .imageLeading }
     }
 
+    func menuWillOpen(_ menu: NSMenu) { menuOpen = true }
+    func menuDidClose(_ menu: NSMenu) { menuOpen = false }
+
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         func item(_ title: String, _ action: Selector?, key: String = "", mods: NSEvent.ModifierFlags = [], on: Bool = false) -> NSMenuItem {
@@ -2010,14 +2031,15 @@ final class Controller: NSObject, NSMenuDelegate {
     }
 
     @objc func installUpdate() { updater.install() }
+    /// A new version installs right away; otherwise a dialog says why not.
     @objc func checkForUpdates() {
         updater.check(force: true) { msg in
+            if self.updater.available != nil { self.updater.install(); return }
             let a = NSAlert()
-            a.messageText = self.updater.available == nil ? "No update" : "Update ready"
+            a.messageText = "No update"
             a.informativeText = msg
-            if self.updater.available != nil { a.addButton(withTitle: "Update now"); a.addButton(withTitle: "Later") }
             NSApp.activate(ignoringOtherApps: true)
-            if a.runModal() == .alertFirstButtonReturn && self.updater.available != nil { self.updater.install() }
+            a.runModal()
         }
     }
     @objc func toggleTidy() { tidyOn.toggle(); if !tidyOn { hideCard() }; updateStatus() }

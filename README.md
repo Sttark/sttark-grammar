@@ -9,7 +9,7 @@ A Mac menu bar app for Sttark that uses Claude to check your writing as you type
 - **Translate to Chinese**, with an English check of what the Chinese says.
 - **Read aloud**, in a natural voice, at the speed you pick.
 - **Shortcuts** you can change for Fix all, Tidy up, read aloud and translate.
-- **Updates itself.** When a new version is out, you get a notice. One click installs it and keeps your settings.
+- **Updates itself** within an hour of a new version being released, with no click. Your settings stay as they are.
 
 ![The corner dot, the card for a misspelled word, and the dot's card with Fix all, Tidy up and a preview of the tidied message](screenshot.png)
 
@@ -29,7 +29,18 @@ The app starts by itself when you log in. Its icon in the menu bar is the Sttark
 
 ## Updates
 
-The app checks for a new version a few times a day. When there is one, you get a notice: click it, or choose **Update to …** at the top of the menu. The app downloads the new version, swaps it in and restarts in a few seconds. Your settings, dictionary, keys and the Accessibility permission all stay as they are. **Check for updates** in the menu checks right away.
+The app checks for a new version every hour and installs it by itself: you don't click anything. It downloads the new version, checks that it's signed by Sttark, swaps it in and restarts in a few seconds, in the background. Your settings, dictionary, keys and the Accessibility permission all stay as they are.
+
+It restarts only when it can't get in your way. It waits while:
+- the menu, or one of the app's dialogs (an API key, a shortcut), is open, or a key you entered is being checked
+- a fix, Fix all or Tidy up is going in, since the clipboard holds the new text until the app puts yours back
+- the text box you're in changed in the last minute: you're typing, or a fix just went in
+- a fix card or the dot's card is open
+- a translation or read aloud is running, or the translation card is showing
+
+It tries again every minute until none of these is true.
+
+You see a notice only when an update fails to install. Click it, or choose **Update to …** at the top of the menu, to try again; the app also tries again by itself after 6 hours. **Check for updates** in the menu checks right away and installs a new version at once.
 
 ## Using it
 
@@ -104,7 +115,7 @@ The menu bar icon (the Sttark S and a text cursor) has:
 - Today's checks and cost
 - My dictionary
 - Change API key, and the OpenAI key once you've added one
-- Check for updates, or Update when a new version is ready
+- Check for updates, which installs a new version at once, or Update to … while a new version waits for a quiet moment or after one failed to install
 
 Terminal, iTerm2, Ghostty, Warp, 1Password and Keychain Access are skipped from the start. Password fields are never readable by any app, and search boxes are skipped.
 
@@ -155,7 +166,7 @@ This builds the app into `~/Applications` and opens it. Without the Sttark signi
 
 ### Releases
 
-Every change to the app's code on `main` (`Sources`, `Resources`, `Info.plist`, `build.sh`) makes GitHub build, sign and publish a new release by itself (`.github/workflows/release.yml`). The version is 1 followed by the number of commits, so each one is higher than the last. The app looks at the latest release on GitHub, and installs it only if it's signed with the same Sttark certificate. The certificate is in the repo's secrets (`SIGN_P12`, `SIGN_P12_PASSWORD`). It's self-made, not from Apple: it keeps the Accessibility permission on through updates, but can't skip the Open Anyway step on a first install.
+Every change to the app's code on `main` (`Sources`, `Resources`, `Info.plist`, `build.sh`) makes GitHub build, sign and publish a new release by itself (`.github/workflows/release.yml`). The version is 1 followed by the number of commits, so each one is higher than the last. The app looks at the latest release on GitHub every hour, and installs it only if it's signed with the same Sttark certificate. The certificate is in the repo's secrets (`SIGN_P12`, `SIGN_P12_PASSWORD`). It's self-made, not from Apple: it keeps the Accessibility permission on through updates, but can't skip the Open Anyway step on a first install.
 
 ### Files
 
@@ -166,7 +177,8 @@ Every change to the app's code on `main` (`Sources`, `Resources`, `Info.plist`, 
 - `Sources/Translate.swift`: the right-click translate item and its card. It's declared under `NSServices` in `Info.plist`.
 - `Sources/Speak.swift`: read aloud. It streams audio from OpenAI's realtime voice model over a WebSocket and plays it as it arrives, with a fresh audio engine for each read so it follows the current speaker.
 - `Sources/Shortcuts.swift`: the shortcuts you can change and how they're saved
-- `Sources/Update.swift`: the update check and one-click install, where the keys are saved, and carrying settings over from the app's old name (ClaudeGrammar)
+- `Sources/Update.swift`: the hourly update check and the install that runs by itself, where the keys are saved, and carrying settings over from the app's old name (ClaudeGrammar)
+- `tools/update-test.sh`: tests the install that runs by itself. It puts the real `Sources/Update.swift` in a stand-in app (`tools/update-test/main.swift`) with its own ID, in a temporary folder, against fake releases. It checks that a new version waits while the app is busy, then installs and restarts with no notice; that a version not signed like the app fails with one notice, no dialog and no second try; and that the same version does nothing. The installed app and its settings, dictionary and keys aren't touched.
 - `Sources/Brand.swift`: Sttark colors and type, from the brand guide on docs.sttark.com
 - `Resources/`: the app icon and menu bar icon, made by `tools/make-icons.py`
 - `tools/screenshot.swift`: draws `screenshot.png`

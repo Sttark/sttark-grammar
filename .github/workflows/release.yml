@@ -1,5 +1,5 @@
 # Builds, signs and publishes a new version whenever the app's code changes on main.
-# The app checks this repo's latest release and offers it to everyone with one click.
+# The app checks this repo's latest release every hour and installs it by itself.
 name: Release
 on:
   push:
@@ -41,4 +41,4 @@ jobs:
           V=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" build/SttarkGrammar.app/Contents/Info.plist)
           ditto -c -k --keepParent build/SttarkGrammar.app SttarkGrammar.zip
           gh release create "v$V" SttarkGrammar.zip --title "Sttark Grammar $V" --latest \
-            --notes "$(git log -1 --format=%s)"$'\n\n'"Download SttarkGrammar.zip below, or click Update in the app's menu."
+            --notes "$(git log -1 --format=%s)"$'\n\n'"The app installs this by itself within an hour. For a first install, download SttarkGrammar.zip below."
