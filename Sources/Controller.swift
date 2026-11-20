@@ -437,13 +437,84 @@ final class Controller: NSObject, NSMenuDelegate {
     /// The paragraphs you wrote: a forwarded or quoted email below them isn't checked or fixed.
     func paragraphs(_ s: NSString) -> [(NSRange, String)] {
         var out: [(NSRange, String)] = []
-        s.enumerateSubstrings(in: NSRange(location: 0, length: Diff.quoteStart(s) ?? s.length), options: [.byParagraphs]) { sub, r, _, _ in
+        s.enumerateSubstrings(in: NSRange(location: 0, length: quoteCut(s) ?? s.length), options: [.byParagraphs]) { sub, r, _, _ in
             if let sub { out.append((r, sub)) }
         }
         return out
     }
 
-    /// A fix never goes over an Asana mention chip: the paste would turn it into plain text.
+    /// Where a forwarded or quoted email starts in a text: by its words ("On … wrote:", "Forwarded message"), or
+    /// in the box we're in by Gmail's own quote block, whatever its words say. Nil when there's none.
+    func quoteCut(_ s: NSString) -> Int? {
+        let byWords = Diff.quoteStart(s)
+        guard let el = element, s.isEqual(to: value as String), let block = quoteBlockStart(el) else { return byWords }
+        if byWords.map({ block < $0 }) ?? true, !quoteNoted.contains(value.hash) {
+            quoteNoted.insert(value.hash)
+            note("quote: found by Gmail's quote block, not by its words: \(String(value.substring(from: block).prefix(120)).debugDescription)")
+        }
+        return min(byWords ?? block, block)
+    }
+    var quoteNoted: Set<Int> = []
+    var quoteKey = ""
+    var quoteFound: Int?
+
+    /// Gmail keeps a quoted or forwarded email in a block of its own (gmail_quote, with its "On … wrote:" or
+    /// "Forwarded message" line in gmail_attr): where that block's first words sit in our text, from the start of
+    /// their line. Looked for near the top of the box only, so a long email costs little.
+    func quoteBlockStart(_ el: AXUIElement) -> Int? {
+        let key = "\(value.hash) \(value.length)"
+        if key == quoteKey { return quoteFound }
+        quoteKey = key
+        quoteFound = nil
+        var seen = 0
+        func firstText(_ e: AXUIElement, _ depth: Int) -> String? {
+            seen += 1
+            guard seen < 400, depth < 8 else { return nil }
+            if AX.string(e, kAXRoleAttribute) == "AXStaticText" {
+                let t = (AX.string(e, kAXValueAttribute) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                return t.isEmpty ? nil : t
+            }
+            for c in AX.children(e) { if let t = firstText(c, depth + 1) { return t } }
+            return nil
+        }
+        func block(_ e: AXUIElement, _ depth: Int) -> AXUIElement? {
+            seen += 1
+            guard seen < 300, depth < 3 else { return nil }
+            if Self.isQuoteBlock(e) { return e }
+            guard AX.string(e, kAXRoleAttribute) == "AXGroup" || depth == 0 else { return nil }
+            for c in AX.children(e) { if let hit = block(c, depth + 1) { return hit } }
+            return nil
+        }
+        guard let b = block(el, 0), let first = firstText(b, 0) else { return nil }
+        let r = value.range(of: first)
+        guard r.location != NSNotFound else { return nil }
+        var start = r.location
+        while start > 0, value.character(at: start - 1) != 10 { start -= 1 }
+        quoteFound = start
+        return start
+    }
+
+    /// The part of a text that's yours: everything before a forwarded or quoted email. The text is our copy of
+    /// the box or the message as you see it (blank lines added), which is cut where the quote block's line is.
+    func ownPart(_ s: NSString) -> String {
+        if let cut = quoteCut(s) { return s.substring(to: cut) }
+        if let el = element, let b = quoteBlockStart(el) {
+            let line = value.substring(from: b).components(separatedBy: "\n")[0]
+            let r = s.range(of: line)
+            if !line.isEmpty, r.location != NSNotFound { return s.substring(to: r.location) }
+        }
+        return s as String
+    }
+
+    /// How long the part you wrote is, without a quoted or forwarded email below it.
+    var ownLength: Int { quoteCut(value) ?? value.length }
+
+    static func isQuoteBlock(_ e: AXUIElement) -> Bool {
+        guard let cls = AX.attr(e, "AXDOMClassList") as? [String] else { return false }
+        return cls.contains { $0 == "gmail_quote" || $0 == "gmail_attr" || $0 == "gmail_quote_container" }
+    }
+
+    /// A fix never goes over a mention chip (Asana's, or a Gmail @mention): the paste would turn it into plain text.
     func notOnChip(_ i: Issue) -> Bool {
         guard let el = element, let chips = pills(el) else { return true }
         return !chips.ranges.contains { NSIntersectionRange($0, i.range).length > 0 || ($0.location <= i.range.location && i.range.location < $0.upperBound) }
@@ -638,9 +709,9 @@ final class Controller: NSObject, NSMenuDelegate {
 
     /// The message is long enough for a tidy-up check.
     var tidyEligible: Bool {
-        let key = Diff.flattenTags(Diff.ownPart(value as String))
+        let key = Diff.flattenTags(ownPart(value))
         let words = key.split(whereSeparator: \.isWhitespace).count, lines = key.split(separator: "\n").count
-        return tidyOn && value.length <= 8000 && (words >= 3 || lines >= 3)
+        return tidyOn && ownLength <= 8000 && (words >= 3 || lines >= 3)
     }
     /// You've paused long enough that the checks are about to go out (they go at 2 s): show it from 0.6 s on.
     var paused: Bool { Date().timeIntervalSince(lastChange) > 0.6 || Date().timeIntervalSince(lastOwnEdit) < 4 }
@@ -1028,9 +1099,9 @@ final class Controller: NSObject, NSMenuDelegate {
     /// The whole message goes to Claude once you pause, if it's long enough to have a layout.
     func sendTidyCheck(_ el: AXUIElement) {
         let key = value as String
-        guard tidyOn, !tidyInflight.contains(key), tidyInflight.count < 3, !tidyChecked.contains(key), value.length <= 8000 else { return }
+        guard tidyOn, !tidyInflight.contains(key), tidyInflight.count < 3, !tidyChecked.contains(key), ownLength <= 8000 else { return }
         // a tag counts as the name it shows, not as the lines a box like Google Chat reports for it
-        let flat = Diff.flattenTags(Diff.ownPart(key))
+        let flat = Diff.flattenTags(ownPart(value))
         let words = flat.split(whereSeparator: \.isWhitespace).count
         let lines = flat.split(separator: "\n").count
         guard words >= 3 || lines >= 3 else { return }   // the same floor as the spell check
@@ -1050,7 +1121,7 @@ final class Controller: NSObject, NSMenuDelegate {
             note("tidy: skipped in \(appName), couldn't find the text around its pictures")
             return
         }
-        // Asana's mention chips: the same rules as Google Chat's tags
+        // Asana's mention chips and Gmail's @mentions: the same rules as Google Chat's tags
         let chips = pills(el)
         if let chips, !pillsAtStart(chips) {
             tidyChecked.insert(key)
@@ -1062,7 +1133,7 @@ final class Controller: NSObject, NSMenuDelegate {
         // only what you wrote above a forwarded or quoted email
         // a real list in a web box comes through with each number or bullet on a line of its own ("1.\nDid…"):
         // put them back on their lines, or Claude "fixes" a list that's already right
-        let text = (pics?.text ?? chips?.text ?? Diff.flattenTags(Diff.ownPart(displayText(el))))
+        let text = (pics?.text ?? chips.map { Diff.ownPart($0.text) } ?? Diff.flattenTags(ownPart(displayText(el) as NSString)))
             .replacingOccurrences(of: #"(?m)^[ \t]*(\d+[.)]|[-•◦▪*])[ \t]*\n+"#, with: "$1 ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let pictureCount = pics.map { $0.runs.count - 1 } ?? 0
@@ -1250,12 +1321,12 @@ final class Controller: NSObject, NSMenuDelegate {
         if let last = Diff.tags(in: value).last, Diff.tagsAtStart(value) {
             return applyTidyAfterTags(el, t, after: last.0.upperBound, names: Diff.tags(in: value).map(\.1), spaced: spaced)
         }
-        // Asana's mention chips at the start stay too, the same way
+        // Asana's mention chips and Gmail's @mentions at the start stay too, the same way, and a quoted email below
         if let chips = pills(el), pillsAtStart(chips), let last = chips.ranges.last {
-            return applyTidyAfterTags(el, t, after: last.upperBound, names: chips.names.map { "@" + $0 }, spaced: spaced, keepSpace: true)
+            return applyTidyAfterTags(el, t, after: last.upperBound, names: chips.names.map { "@" + $0 }, spaced: spaced, keepSpace: true, end: quoteCut(value))
         }
         // A forwarded or quoted email below stays as it is: paste only over what you wrote above it.
-        if let cut = Diff.quoteStart(value) {
+        if let cut = quoteCut(value) {
             return applyTidyAbove(el, t, end: cut, spaced: spaced)
         }
         let first = t.lines[0].text
@@ -1345,7 +1416,7 @@ final class Controller: NSObject, NSMenuDelegate {
 
     /// Tidy up for a message that starts with tags: the tidied text without its leading "@Name"s goes over the text
     /// after the last tag, never over the tags. If that text can't be selected exactly, nothing is pasted.
-    func applyTidyAfterTags(_ el: AXUIElement, _ t: Tidy, after tagEnd: Int, names: [String], spaced: Bool, keepSpace: Bool = false) {
+    func applyTidyAfterTags(_ el: AXUIElement, _ t: Tidy, after tagEnd: Int, names: [String], spaced: Bool, keepSpace: Bool = false, end: Int? = nil) {
         // Asana drops a space at the start of a paste: the space after the last mention stays out of the selection
         var start = tagEnd
         if keepSpace { while start < value.length, let c = Unicode.Scalar(value.character(at: start)), c == " " || c == "\u{00A0}" { start += 1 } }
@@ -1362,8 +1433,11 @@ final class Controller: NSObject, NSMenuDelegate {
             if ok { watchAfterTidy(el) }
             updateStatus()
         }
-        guard let first = tail.lines.first?.text, start < value.length else { return finish(false) }
-        let range = NSRange(location: start, length: value.length - start)
+        // a quoted email below stays: up to the end of your last line, the empty lines before the quote stay
+        var stop = min(end ?? value.length, value.length)
+        if end != nil { while stop > start, let c = Unicode.Scalar(value.character(at: stop - 1)), CharacterSet.whitespacesAndNewlines.contains(c) { stop -= 1 } }
+        guard let first = tail.lines.first?.text, start < stop else { return finish(false) }
+        let range = NSRange(location: start, length: stop - start)
         let old = value.substring(with: range)
         let want = first.split(separator: " ").prefix(4).joined(separator: " ").lowercased()
         note("tidy up in \(appName) after \(names.count) tag\(names.count == 1 ? "" : "s"): \(tail.lines.count) lines")
@@ -1377,14 +1451,39 @@ final class Controller: NSObject, NSMenuDelegate {
             self.paste(lead + tail.plain(blankLines: !spaced), html: keepSpace ? tail.html(blankLines: !spaced) : nil) {
                 Self.wait(until: { let v = AX.string(el, kAXValueAttribute) ?? ""; return v != before && Diff.flattenTags(v).lowercased().contains(want) }, tries: 100) { landed in
                     if !landed { note("tidy paste after tags didn't show") }
-                    finish(landed)
+                    // Google Chat can start a pasted block of lines on a new line under the tag; the words go back
+                    // up beside it
+                    guard landed, !keepSpace, !ownLine, !old.hasPrefix("\n") else { return finish(landed) }
+                    self.joinAfterTag(el) { finish(landed) }
                 }
             }
         }
     }
 
-    /// Asana's mention chips (@Christopher Price, a task, a project): links the box shows as a name with its
-    /// picture. Its text gives only the name, with a stray line break or two, so they're read from the box's parts.
+    /// A line break right after the last tag that the tidy-up didn't ask for: the caret goes to the start of the
+    /// words below it and one Delete joins them back onto the tag's line. Only when the caret is seen there.
+    func joinAfterTag(_ el: AXUIElement, then: @escaping () -> Void) {
+        refresh(el)
+        guard let last = Diff.tags(in: value).last, last.0.upperBound < value.length, value.character(at: last.0.upperBound) == 10 else { return then() }
+        let at = NSRange(location: last.0.upperBound + 1, length: 0)
+        select(el, at)
+        Self.wait(until: { self.selection(el) == at }) { ok in
+            guard ok else { note("tidy: a line break came in after the tag; couldn't put the caret after it"); return then() }
+            let before = AX.string(el, kAXValueAttribute) ?? ""
+            Self.key(51, [])
+            Self.wait(until: { (AX.string(el, kAXValueAttribute) ?? "") != before }) { changed in
+                self.refresh(el)
+                let joined = Diff.tags(in: self.value).last.map { $0.0.upperBound >= self.value.length || self.value.character(at: $0.0.upperBound) != 10 } ?? false
+                note(changed && joined ? "tidy: a line break came in after the tag; joined the words back to it" : "tidy: a line break came in after the tag; Delete didn't join it")
+                then()
+            }
+        }
+    }
+
+    /// Mention chips: Asana's (@Christopher Price, a task, a project), links the box shows as a name with its
+    /// picture, whose text gives only the name with a stray line break or two; and Gmail's @mentions, links that
+    /// show "@Name". A paste over either turns it into plain text, so they're read from the box's parts. A chip in
+    /// a quoted or forwarded email below doesn't count.
     /// Each comes with where its name sits in our text, in order; and the message as you'd read it, each chip
     /// written as "@Name", paragraphs one per line.
     struct Pills { var names: [String]; var ranges: [NSRange]; var text: String }
@@ -1396,16 +1495,19 @@ final class Controller: NSObject, NSMenuDelegate {
         if key == pillsKey { return pillsFound }
         pillsKey = key
         pillsFound = nil
-        guard value.length <= 8000 else { return nil }
-        var names: [String] = [], seen = 0
+        guard ownLength <= 8000 else { return nil }
+        var names: [String] = [], seen = 0, quoted = false
         func isPill(_ e: AXUIElement) -> Bool {
-            AX.string(e, kAXRoleAttribute) == "AXLink" && ((AX.attr(e, "AXDOMClassList") as? [String])?.contains("HypertextLink-navigationPill") == true)
+            guard AX.string(e, kAXRoleAttribute) == "AXLink", let cls = AX.attr(e, "AXDOMClassList") as? [String] else { return false }
+            return cls.contains("HypertextLink-navigationPill") || cls.contains("gmail_plusreply")
         }
         func leafText(_ e: AXUIElement) -> String {
             seen += 1
-            guard seen < 3000 else { return "" }
+            guard seen < 3000, !quoted else { return "" }
+            if Self.isQuoteBlock(e) { quoted = true; return "" }
             if isPill(e) {
-                let name = AX.children(e).compactMap { AX.string($0, kAXValueAttribute) }.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+                var name = AX.children(e).compactMap { AX.string($0, kAXValueAttribute) }.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+                if name.hasPrefix("@") { name.removeFirst() }
                 names.append(name)
                 return "@" + name
             }
@@ -1432,12 +1534,22 @@ final class Controller: NSObject, NSMenuDelegate {
                 return [marker + head] + inner.dropFirst()
             }
         }
-        let paras = AX.children(el).flatMap(blockLines)
+        // words and chips side by side (Gmail's first line, which has no block of its own) make one line
+        var paras: [String] = [], inline = false
+        for c in AX.children(el) {
+            if ["AXStaticText", "AXLink"].contains(AX.string(c, kAXRoleAttribute) ?? "") {
+                let t = leafText(c)
+                if inline { paras[paras.count - 1] += t } else { paras.append(t) }
+                inline = true
+            } else { paras += blockLines(c); inline = false }
+        }
         guard !names.isEmpty else { return nil }
         var ranges: [NSRange] = [], from = 0
         for n in names {
-            let r = value.range(of: n, options: [], range: NSRange(location: from, length: value.length - from))
+            var r = value.range(of: n, options: [], range: NSRange(location: from, length: value.length - from))
             guard r.location != NSNotFound else { return nil }
+            // a Gmail mention shows its "@": it's part of the chip
+            if r.location > 0, value.character(at: r.location - 1) == 64 { r = NSRange(location: r.location - 1, length: r.length + 1) }
             ranges.append(r)
             from = r.upperBound
         }
@@ -1458,6 +1570,7 @@ final class Controller: NSObject, NSMenuDelegate {
         func walk(_ e: AXUIElement) {
             seen += 1
             guard seen < 4000, !quoted else { return }
+            if Self.isQuoteBlock(e) { quoted = true; return }
             let role = AX.string(e, kAXRoleAttribute) ?? ""
             if role == "AXImage", let f = AX.frame(e), f.height >= 32 || f.width >= 48 { pictures += 1; groups.append([]); return }
             if role == "AXStaticText" {
